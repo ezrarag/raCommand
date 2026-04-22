@@ -1,0 +1,121 @@
+name: iOS Build
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CURRENT MODE: Simulator build (no Apple Developer account required)
+#
+# TO ACTIVATE REAL DEVICE DISTRIBUTION (when Apple account is paid):
+#   1. Uncomment the "Beta Distribution" job below
+#   2. Comment out or delete the "Simulator Build" job
+#   3. Add the required secrets to this repo's Settings → Secrets → Actions
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+
+  # ── ACTIVE: Simulator build — works with no Apple account ──────────────────
+  simulator-build:
+    name: Simulator Build
+    runs-on: macos-15
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: sudo xcode-select -s /Applications/Xcode_16.app
+
+      - name: Setup Ruby + Bundler cache
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Install Fastlane plugins
+        run: bundle install
+
+      - name: Build for simulator via Fastlane
+        run: bundle exec fastlane build_sim
+
+      - name: Find built .app
+        id: find_app
+        run: |
+          APP_PATH=$(find ./build/DerivedData -name "raCommand.app" -type d | head -1)
+          echo "app_path=$APP_PATH" >> $GITHUB_OUTPUT
+          echo "Found app at: $APP_PATH"
+
+      - name: Upload simulator .app as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: raCommand-simulator-${{ github.run_number }}
+          path: ${{ steps.find_app.outputs.app_path }}
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Build summary
+        run: |
+          echo "### ✅ raCommand Simulator Build #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📦 Download the \`.app\` artifact above and drag it into the iOS Simulator to preview." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "⏳ *Real device distribution activates once Apple Developer account is paid.*" >> $GITHUB_STEP_SUMMARY
+
+
+  # ── FUTURE: Real device distribution via Firebase ──────────────────────────
+  # Uncomment this entire block when Apple Developer account is active.
+  # Required secrets: DIST_CERT_BASE64, DIST_CERT_PASSWORD,
+  #   PROVISIONING_PROFILE_BASE64, PROVISIONING_PROFILE_NAME,
+  #   APPLE_TEAM_ID, FIREBASE_TOKEN, FIREBASE_APP_ID_RACOMMAND
+  #
+  # beta-distribution:
+  #   name: Beta Distribution
+  #   runs-on: macos-15
+  #   timeout-minutes: 60
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - run: sudo xcode-select -s /Applications/Xcode_16.app
+  #     - uses: ruby/setup-ruby@v1
+  #       with:
+  #         ruby-version: '3.3'
+  #         bundler-cache: true
+  #     - name: Decode certificate
+  #       env:
+  #         DIST_CERT_BASE64: ${{ secrets.DIST_CERT_BASE64 }}
+  #         DIST_CERT_PASSWORD: ${{ secrets.DIST_CERT_PASSWORD }}
+  #       run: |
+  #         echo "$DIST_CERT_BASE64" | base64 --decode > /tmp/dist_cert.p12
+  #         security create-keychain -p "" build.keychain
+  #         security default-keychain -s build.keychain
+  #         security unlock-keychain -p "" build.keychain
+  #         security import /tmp/dist_cert.p12 -k build.keychain \
+  #           -P "$DIST_CERT_PASSWORD" -T /usr/bin/codesign
+  #         security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+  #     - name: Decode provisioning profile
+  #       env:
+  #         PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+  #       run: |
+  #         echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode > /tmp/profile.mobileprovision
+  #         mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+  #         cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+  #     - name: Run Fastlane beta lane
+  #       env:
+  #         FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+  #         FIREBASE_APP_ID_RACOMMAND: ${{ secrets.FIREBASE_APP_ID_RACOMMAND }}
+  #         DIST_CERT_PASSWORD: ${{ secrets.DIST_CERT_PASSWORD }}
+  #         PROVISIONING_PROFILE_NAME: ${{ secrets.PROVISIONING_PROFILE_NAME }}
+  #         APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+  #         CI: "true"
+  #       run: bundle exec fastlane beta notes:"${{ github.event.inputs.notes }}"
+  #     - uses: actions/upload-artifact@v4
+  #       with:
+  #         name: raCommand-${{ github.run_number }}
+  #         path: build/raCommand.ipa
+  #         retention-days: 30

@@ -1,0 +1,86 @@
+# Fastfile for raCommand
+# 
+# Current mode:  SIMULATOR (no Apple Developer account required)
+# Future mode:   BETA (flip CI_MODE to "beta" in workflow once account is active)
+#
+# Local usage:
+#   bundle exec fastlane build_sim     ← simulator build (free, always works)
+#   bundle exec fastlane beta          ← real device distribution (requires paid account)
+
+default_platform(:ios)
+
+platform :ios do
+
+  before_all do
+    if ENV["CI"]
+      setup_ci
+    end
+  end
+
+  # ── SIMULATOR LANE ─────────────────────────────────────────────────────────
+  # No signing, no provisioning profile, no Apple account needed.
+  # Produces a .app bundle uploaded as a GitHub artifact.
+  # ──────────────────────────────────────────────────────────────────────────
+  lane :build_sim do
+    UI.message("🔨 Building raCommand for iOS Simulator...")
+
+    xcodebuild(
+      scheme:        "raCommand",
+      project:       "raCommand.xcodeproj",
+      configuration: "Debug",
+      destination:   "platform=iOS Simulator,name=iPhone 16 Pro,OS=latest",
+      build:         true,
+      derivedDataPath: "./build/DerivedData"
+    )
+
+    UI.success("✅ raCommand simulator build complete — artifact ready for upload.")
+  end
+
+  # ── BETA LANE (requires paid Apple Developer account) ──────────────────────
+  # Activate by setting CI_MODE=beta in the GitHub Actions workflow env.
+  # Everything below is ready — no changes needed when account is active.
+  # ──────────────────────────────────────────────────────────────────────────
+  lane :beta do |options|
+    notes = options[:notes] || "Branch: #{git_branch} | #{last_git_commit[:abbreviated_commit_hash]}"
+
+    if ENV["CI"]
+      import_certificate(
+        certificate_path:     "/tmp/dist_cert.p12",
+        certificate_password: ENV["DIST_CERT_PASSWORD"],
+        keychain_name:        "build.keychain",
+        keychain_password:    ""
+      )
+      install_provisioning_profile(path: "/tmp/profile.mobileprovision")
+    end
+
+    build_number = ENV["GITHUB_RUN_NUMBER"] || Time.now.strftime("%Y%m%d%H%M")
+    increment_build_number(build_number: build_number, xcodeproj: "raCommand.xcodeproj")
+
+    gym(
+      scheme:            "raCommand",
+      project:           "raCommand.xcodeproj",
+      configuration:     "Release",
+      export_method:     "ad-hoc",
+      export_options: {
+        teamID: "26HZ47X5B4",
+        provisioningProfiles: {
+          "com.readyaimgo.raCommand" => ENV["PROVISIONING_PROFILE_NAME"]
+        }
+      },
+      output_directory:  "./build",
+      output_name:       "raCommand.ipa",
+      clean:             true
+    )
+
+    firebase_app_distribution(
+      app:                ENV["FIREBASE_APP_ID_RACOMMAND"],
+      firebase_cli_token: ENV["FIREBASE_TOKEN"],
+      groups:             "internal-team, clients",
+      release_notes:      notes,
+      ipa_path:           "./build/raCommand.ipa"
+    )
+
+    UI.success("✅ raCommand build #{build_number} distributed via Firebase!")
+  end
+
+end

@@ -29,6 +29,16 @@ struct MainTabView: View {
                     Label("Pulse", systemImage: "waveform.path.ecg")
                 }
 
+            IntelligenceFeedView()
+                .tabItem {
+                    Label("Intelligence", systemImage: "brain")
+                }
+
+            AIThreadsView()
+                .tabItem {
+                    Label("Threads", systemImage: "bubble.left.and.bubble.right")
+                }
+
             TodayView()
                 .tabItem {
                     Label("Today", systemImage: "calendar")

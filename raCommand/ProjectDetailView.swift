@@ -115,7 +115,7 @@ struct ProjectDetailView: View {
             HStack(alignment: .top, spacing: 14) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(project.name.isEmpty ? "Untitled project" : project.name)
-                        .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                        .font(.title2.weight(.semibold))
                         .foregroundStyle(WhisperTheme.ink)
 
                     if !project.clientName.isEmpty {
@@ -172,7 +172,7 @@ struct ProjectDetailView: View {
                 }
             }
         }
-        .whisperPanel(padding: 22, radius: 28)
+        .whisperPanel(padding: 16, radius: 10)
     }
 
     private var projectDetailsPanel: some View {

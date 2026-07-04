@@ -60,6 +60,7 @@ struct SettingsView: View {
                 .padding(.bottom, 36)
             }
             .whisperShell()
+            .quickIdeaToolbar()
             .navigationTitle("Settings")
             .platformNavigationTitleDisplayMode(.large)
         }
@@ -69,14 +70,13 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("APP MEMORY")
-                    .font(.caption2.weight(.bold))
-                    .tracking(1.4)
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(WhisperTheme.accent)
                 Text("Context, ship notes, and loose ideas.")
-                    .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                    .font(.title2.weight(.semibold))
                     .foregroundStyle(WhisperTheme.ink)
                 Text("This space holds the story of the app so product direction, build history, and rough ideas stay close together.")
-                    .font(.subheadline)
+                    .font(.callout)
                     .foregroundStyle(WhisperTheme.mutedInk)
             }
 
@@ -85,7 +85,7 @@ struct SettingsView: View {
                 WhisperMetricPill(label: "Ideas", value: "\(ideaNotes.count)", tone: WhisperTheme.accent)
             }
         }
-        .whisperPanel(padding: 20, radius: 28)
+        .whisperPanel(padding: 16, radius: 10)
     }
 
     private func editorPanel(eyebrow: String, title: String, text: Binding<String>, prompt: String) -> some View {

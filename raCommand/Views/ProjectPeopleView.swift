@@ -39,20 +39,19 @@ struct ProjectPeopleView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
 
-                // ── Header ────────────────────────────────────────────
+                // Header
                 VStack(alignment: .leading, spacing: 8) {
                     Text("PEOPLE")
-                        .font(.caption2.weight(.bold))
-                        .tracking(1.4)
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(WhisperTheme.accent)
                     Text("Who's working on \(project.name.isEmpty ? "this project" : project.name)")
-                        .font(.system(.title2, design: .rounded).weight(.bold))
+                        .font(.title3.weight(.semibold))
                         .foregroundStyle(WhisperTheme.ink)
                     Text("GitHub collaborators and client portal access.")
-                        .font(.subheadline)
+                        .font(.callout)
                         .foregroundStyle(WhisperTheme.mutedInk)
                 }
-                .whisperPanel(padding: 20, radius: 28)
+                .whisperPanel(padding: 16, radius: 10)
 
                 // ── Feedback banners ──────────────────────────────────
                 if let msg = successMessage { banner(msg, isError: false) }

@@ -11,14 +11,44 @@ import Security
 
 enum KeychainService {
     private static let service = "com.readyaimgo.raCommand"
-    private static let account = "githubToken"
+    private static let githubTokenAccount = "githubToken"
+    private static let desktopSessionTokenAccount = "desktopSessionToken"
 
     @discardableResult
     static func saveGitHubToken(_ token: String) -> Bool {
+        saveToken(token, account: githubTokenAccount)
+    }
+
+    static func loadGitHubToken() -> String? {
+        loadToken(account: githubTokenAccount)
+    }
+
+    static func deleteGitHubToken() {
+        deleteToken(account: githubTokenAccount)
+    }
+
+    static func hasGitHubToken() -> Bool {
+        loadGitHubToken() != nil
+    }
+
+    @discardableResult
+    static func saveDesktopSessionToken(_ token: String) -> Bool {
+        saveToken(token, account: desktopSessionTokenAccount)
+    }
+
+    static func loadDesktopSessionToken() -> String? {
+        loadToken(account: desktopSessionTokenAccount)
+    }
+
+    static func deleteDesktopSessionToken() {
+        deleteToken(account: desktopSessionTokenAccount)
+    }
+
+    private static func saveToken(_ token: String, account: String) -> Bool {
         guard let data = token.data(using: .utf8) else { return false }
 
         // Delete any existing item first — avoids update conflicts in simulator
-        deleteGitHubToken()
+        deleteToken(account: account)
 
         let query: [String: Any] = [
             kSecClass as String:                kSecClassGenericPassword,
@@ -32,7 +62,7 @@ enum KeychainService {
         return status == errSecSuccess
     }
 
-    static func loadGitHubToken() -> String? {
+    private static func loadToken(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String:            kSecClassGenericPassword,
             kSecAttrService as String:      service,
@@ -51,16 +81,12 @@ enum KeychainService {
         return token
     }
 
-    static func deleteGitHubToken() {
+    private static func deleteToken(account: String) {
         let query: [String: Any] = [
             kSecClass as String:        kSecClassGenericPassword,
             kSecAttrService as String:  service,
             kSecAttrAccount as String:  account
         ]
         SecItemDelete(query as CFDictionary)
-    }
-
-    static func hasGitHubToken() -> Bool {
-        loadGitHubToken() != nil
     }
 }

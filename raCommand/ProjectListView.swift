@@ -2,7 +2,7 @@
 //  ProjectListView.swift
 //  raCommand
 //
-//  Warm, card-first project command center inspired by the MacWhisper visual language.
+//  Compact project command center with native macOS utility chrome.
 //
 
 import SwiftUI
@@ -95,6 +95,7 @@ struct ProjectListView: View {
                 .padding(.bottom, 36)
             }
             .whisperShell()
+            .quickIdeaToolbar()
             .navigationTitle("Projects")
             .platformNavigationTitleDisplayMode(.large)
             .platformSearchable(text: $searchText, prompt: "Search projects")
@@ -167,14 +168,13 @@ struct ProjectListView: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("COMMAND DESK")
-                    .font(.caption2.weight(.bold))
-                    .tracking(1.4)
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(WhisperTheme.accent)
                 Text("Projects and threads that need a clear next move.")
-                    .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                    .font(.title2.weight(.semibold))
                     .foregroundStyle(WhisperTheme.ink)
                 Text("Tracked repos live here, and active Codex threads rise to the top so the board matches the actual workflow.")
-                    .font(.subheadline)
+                    .font(.callout)
                     .foregroundStyle(WhisperTheme.mutedInk)
             }
 
@@ -193,7 +193,7 @@ struct ProjectListView: View {
             .font(.caption.weight(.medium))
             .foregroundStyle(WhisperTheme.mutedInk)
         }
-        .whisperPanel(padding: 20, radius: 28)
+        .whisperPanel(padding: 16, radius: 10)
     }
 
     private func delete(_ project: Project) {

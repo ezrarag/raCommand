@@ -30,19 +30,18 @@ struct AddProjectView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("NEW PROJECT")
-                                .font(.caption2.weight(.bold))
-                                .tracking(1.4)
+                                .font(.caption2.weight(.semibold))
                                 .foregroundStyle(WhisperTheme.accent)
 
                             Text("Create a GitHub repo and open it in Codex.")
-                                .font(.system(.title2, design: .rounded).weight(.bold))
+                                .font(.title3.weight(.semibold))
                                 .foregroundStyle(WhisperTheme.ink)
 
                             Text("Enter a repo name. raCommand will create it on GitHub, clone it into `~/Desktop/local dev`, and open a Codex thread for the new workspace.")
-                                .font(.subheadline)
+                                .font(.callout)
                                 .foregroundStyle(WhisperTheme.mutedInk)
                         }
-                        .whisperPanel()
+                        .whisperPanel(padding: 16, radius: 10)
 
                         VStack(alignment: .leading, spacing: 16) {
                             WhisperSectionTitle(
@@ -132,7 +131,7 @@ struct AddProjectView: View {
             .navigationTitle("New Project")
             .platformNavigationTitleDisplayMode(.inline)
             .tint(WhisperTheme.accent)
-            .fontDesign(.rounded)
+            .fontDesign(.default)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     if isCreating {

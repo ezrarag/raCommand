@@ -84,6 +84,7 @@ struct PulseView: View {
                 .padding(.bottom, 36)
             }
             .whisperShell()
+            .quickIdeaToolbar()
             .navigationTitle("Pulse")
             .platformNavigationTitleDisplayMode(.large)
             .task { await loadFeedbackSignals() }
@@ -147,14 +148,13 @@ struct PulseView: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("DAILY BRIEF")
-                    .font(.caption2.weight(.bold))
-                    .tracking(1.4)
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(WhisperTheme.accent)
                 Text("Your ranked project pressure map.")
-                    .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                    .font(.title2.weight(.semibold))
                     .foregroundStyle(WhisperTheme.ink)
                 Text("Pulse now answers targeted project questions using tracked metadata, local git state, and GitHub snapshots.")
-                    .font(.subheadline)
+                    .font(.callout)
                     .foregroundStyle(WhisperTheme.mutedInk)
             }
 
@@ -164,7 +164,7 @@ struct PulseView: View {
                 WhisperMetricPill(label: "Signals", value: loadingSignals ? "…" : "\(feedbackSignals.count)", tone: WhisperTheme.success)
             }
         }
-        .whisperPanel(padding: 20, radius: 28)
+        .whisperPanel(padding: 16, radius: 10)
     }
 
     private var askPulsePanel: some View {

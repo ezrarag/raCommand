@@ -22,6 +22,7 @@ struct ProjectClientNotesView: View {
     @State private var successMessage: String?
     @State private var showShareSheet = false
     @State private var feedbackURL = ""
+    @State private var ideaCount: Int?
 
     enum FeedbackFilter: String, CaseIterable {
         case open = "Open"
@@ -90,17 +91,16 @@ struct ProjectClientNotesView: View {
     private var headerPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("CLIENT NOTES")
-                .font(.caption2.weight(.bold))
-                .tracking(1.4)
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(WhisperTheme.accent)
             Text("Feedback for \(project.name.isEmpty ? "this project" : project.name)")
-                .font(.system(.title2, design: .rounded).weight(.bold))
+                .font(.title3.weight(.semibold))
                 .foregroundStyle(WhisperTheme.ink)
             Text("AI-interpreted notes, Loom videos, and extension annotations from your client.")
-                .font(.subheadline)
+                .font(.callout)
                 .foregroundStyle(WhisperTheme.mutedInk)
         }
-        .whisperPanel(padding: 20, radius: 28)
+        .whisperPanel(padding: 16, radius: 10)
     }
 
     // MARK: - Share Panel
@@ -163,6 +163,7 @@ struct ProjectClientNotesView: View {
             statPill(value: openCount, label: "Open", color: WhisperTheme.warning)
             statPill(value: highUrgencyCount, label: "High urgency", color: WhisperTheme.danger)
             statPill(value: feedback.filter { $0.isVideo }.count, label: "Videos", color: WhisperTheme.info)
+            statPill(value: ideaCount ?? 0, label: "Ideas", color: WhisperTheme.accent)
         }
     }
 
@@ -179,23 +180,13 @@ struct ProjectClientNotesView: View {
     // MARK: - Filter Row
 
     private var filterRow: some View {
-        HStack(spacing: 8) {
+        Picker("Feedback filter", selection: $filter) {
             ForEach(FeedbackFilter.allCases, id: \.self) { f in
-                Button { filter = f } label: {
-                    Text(f.rawValue)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(
-                            filter == f ? WhisperTheme.accent : WhisperTheme.input,
-                            in: Capsule()
-                        )
-                        .foregroundStyle(filter == f ? .white : WhisperTheme.mutedInk)
-                }
-                .buttonStyle(.plain)
+                Text(f.rawValue).tag(f)
             }
-            Spacer()
         }
+        .pickerStyle(.segmented)
+        .labelsHidden()
     }
 
     // MARK: - Feedback List
@@ -219,11 +210,17 @@ struct ProjectClientNotesView: View {
             } else {
                 VStack(spacing: 12) {
                     ForEach(filteredFeedback) { note in
-                        FeedbackCard(note: note, resolving: resolving == note.id) {
+                        FeedbackCard(
+                            note: note,
+                            resolving: resolving == note.id,
+                            onAcknowledge: {
                             Task { await acknowledge(note: note) }
-                        } onResolve: {
-                            selectedFeedback = note
-                        }
+                            },
+                            onResolve: {
+                                selectedFeedback = note
+                            },
+                            ideaCount: ideaCount.flatMap { $0 > 0 ? $0 : nil }
+                        )
                     }
                 }
             }
@@ -260,7 +257,10 @@ struct ProjectClientNotesView: View {
         error = nil
         do {
             let id = project.clientFeedbackProjectId
-            feedback = try await ClientNoteService.fetchFeedback(projectId: id)
+            async let fetchedFeedback = ClientNoteService.fetchFeedback(projectId: id)
+            async let fetchedIdeaCount = ClientNoteService.fetchIdeaCount(clientId: id)
+            feedback = try await fetchedFeedback
+            ideaCount = (try? await fetchedIdeaCount) ?? ideaCount
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
@@ -300,6 +300,7 @@ struct FeedbackCard: View {
     let resolving: Bool
     let onAcknowledge: () -> Void
     let onResolve: () -> Void
+    let ideaCount: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -365,6 +366,9 @@ struct FeedbackCard: View {
             HStack(spacing: 6) {
                 pill(note.category.capitalized, color: WhisperTheme.info)
                 pill("Pulse \(note.pulseScore)", color: WhisperTheme.accent)
+                if let ideaCount {
+                    pill("Ideas \(ideaCount)", color: WhisperTheme.warning)
+                }
                 if note.isFromExtension { pill("Extension", color: Color.purple) }
                 Spacer()
                 // Actions

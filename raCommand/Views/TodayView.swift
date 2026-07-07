@@ -2,14 +2,15 @@
 //  TodayView.swift
 //  raCommand
 //
-//  Linear-style daily briefing with interactive open loops.
+//  Linear-style daily briefing with project deep links through the shell.
 //
 
 import SwiftUI
-import SwiftData
 
 struct TodayView: View {
-    @Query(sort: \Project.lastUpdated, order: .reverse) private var projects: [Project]
+    let projects: [Project]
+    let onOpenProject: (Project) -> Void
+    let onCaptureIdea: () -> Void
 
     @State private var dismissedLoopIDs = Set<String>()
 
@@ -50,26 +51,15 @@ struct TodayView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    briefingCard
+        VStack(alignment: .leading, spacing: 18) {
+            briefingCard
 
-                    if !topProjects.isEmpty {
-                        queuePanel
-                    }
-                }
-                .frame(maxWidth: 460)
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
-                .padding(.bottom, 36)
-                .frame(maxWidth: .infinity)
+            if !topProjects.isEmpty {
+                queuePanel
             }
-            .whisperShell()
-            .quickIdeaToolbar()
-            .navigationTitle("Today")
-            .platformNavigationTitleDisplayMode(.large)
         }
+        .frame(maxWidth: 428, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 
     private var briefingCard: some View {
@@ -81,7 +71,7 @@ struct TodayView: View {
             loopsSection
         }
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [WhisperTheme.panelStrong, WhisperTheme.panel],
@@ -91,10 +81,10 @@ struct TodayView: View {
                 )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(WhisperTheme.border, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.34), radius: 28, x: 0, y: 12)
+        .shadow(color: .black.opacity(0.34), radius: 24, x: 0, y: 10)
     }
 
     private var divider: some View {
@@ -104,14 +94,14 @@ struct TodayView: View {
     }
 
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(greeting)
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(WhisperTheme.ink)
                     Text(Date.now.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()))
-                        .font(.system(.caption, design: .monospaced).weight(.medium))
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundStyle(WhisperTheme.mutedInk)
                 }
 
@@ -120,48 +110,47 @@ struct TodayView: View {
                 modeBadge(title: "BUILD", color: WhisperTheme.accent)
             }
 
-            HStack(spacing: 8) {
-                timeWindow(title: "Money", range: "06-09", color: WhisperTheme.success, isActive: false)
-                timeWindow(title: "Build", range: "09-12:30", color: WhisperTheme.accent, isActive: true)
-                timeWindow(title: "Practice", range: "13-15", color: WhisperTheme.warning, isActive: false)
+            HStack(spacing: 6) {
+                timeWindow(title: "MONEY", range: "06–09", color: WhisperTheme.success, isActive: false, flex: 1.0)
+                timeWindow(title: "BUILD", range: "09–12:30 · now", color: WhisperTheme.accent, isActive: true, flex: 1.15)
+                timeWindow(title: "PRACTICE", range: "13–15", color: WhisperTheme.warning, isActive: false, flex: 1.0)
             }
         }
         .padding(20)
     }
 
     private var nextSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("NEXT")
-                .font(.system(.caption2, design: .monospaced).weight(.bold))
-                .tracking(1)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(WhisperTheme.mutedInk)
 
             if let nextProject {
-                NavigationLink {
-                    ProjectDetailView(project: nextProject)
+                Button {
+                    onOpenProject(nextProject)
                 } label: {
-                    HStack(spacing: 14) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(topProjects.first?.score ?? 0)")
-                                .font(.system(.title3, design: .monospaced).weight(.bold))
+                    HStack(spacing: 13) {
+                        VStack(alignment: .center, spacing: 2) {
+                            Text(nextScore)
+                                .font(.system(size: 15, weight: .bold, design: .monospaced))
                                 .foregroundStyle(WhisperTheme.accent)
                             Text("score")
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(WhisperTheme.mutedInk)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(red: 0.361, green: 0.380, blue: 0.416))
                         }
-                        .frame(width: 54)
+                        .frame(width: 52)
 
                         Rectangle()
-                            .fill(WhisperTheme.border)
+                            .fill(Color.white.opacity(0.07))
                             .frame(width: 1)
 
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 3) {
                             Text(displayName(for: nextProject))
-                                .font(.subheadline.weight(.semibold))
+                                .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(WhisperTheme.ink)
-                                .lineLimit(2)
+                                .lineLimit(1)
                             Text(nextSubtitle(for: nextProject))
-                                .font(.caption)
+                                .font(.system(size: 11))
                                 .foregroundStyle(WhisperTheme.mutedInk)
                                 .lineLimit(2)
                         }
@@ -169,17 +158,21 @@ struct TodayView: View {
                         Spacer(minLength: 8)
 
                         Text("Open")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(WhisperTheme.ink)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Color(red: 0.765, green: 0.780, blue: 0.804))
                             .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background(WhisperTheme.sidebarSelected, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .frame(height: 26)
+                            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                            )
                     }
                     .padding(12)
-                    .background(WhisperTheme.input, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(Color(red: 0.098, green: 0.102, blue: 0.118), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(WhisperTheme.border, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.white.opacity(0.06), lineWidth: 1)
                     )
                 }
                 .buttonStyle(.plain)
@@ -195,33 +188,32 @@ struct TodayView: View {
     }
 
     private var loopsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text("OPEN LOOPS")
-                    .font(.system(.caption2, design: .monospaced).weight(.bold))
-                    .tracking(1)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(WhisperTheme.mutedInk)
                 Text("\(outstandingLoops)")
-                    .font(.system(.caption2, design: .monospaced).weight(.medium))
-                    .foregroundStyle(WhisperTheme.mutedInk)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(red: 0.302, green: 0.322, blue: 0.357))
             }
 
             if openLoops.isEmpty {
                 Text("No open loops yet.")
-                    .font(.subheadline)
+                    .font(.system(size: 13))
                     .foregroundStyle(WhisperTheme.mutedInk)
             } else {
                 ForEach(openLoops) { loop in
                     Button {
                         toggle(loop)
                     } label: {
-                        HStack(spacing: 12) {
+                        HStack(spacing: 11) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                                     .fill(loop.isDone ? WhisperTheme.accent : Color.clear)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                            .stroke(loop.isDone ? WhisperTheme.accent : WhisperTheme.border, lineWidth: 1.5)
+                                            .stroke(loop.isDone ? WhisperTheme.accent : Color.white.opacity(0.18), lineWidth: 1.5)
                                     )
                                 if loop.isDone {
                                     Image(systemName: "checkmark")
@@ -232,17 +224,17 @@ struct TodayView: View {
                             .frame(width: 18, height: 18)
 
                             Text(loop.text)
-                                .font(.subheadline)
-                                .foregroundStyle(loop.isDone ? WhisperTheme.mutedInk : WhisperTheme.ink)
+                                .font(.system(size: 13))
+                                .foregroundStyle(loop.isDone ? Color(red: 0.361, green: 0.380, blue: 0.416) : Color(red: 0.875, green: 0.886, blue: 0.902))
                                 .strikethrough(loop.isDone, color: WhisperTheme.mutedInk)
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
                             Text(loop.tag)
-                                .font(.system(.caption2, design: .monospaced).weight(.bold))
-                                .foregroundStyle(loop.color.opacity(0.95))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(loop.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .padding(.horizontal, 7)
+                                .frame(height: 18)
+                                .background(loop.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                                .foregroundStyle(loop.color)
                         }
                         .padding(.vertical, 4)
                     }
@@ -250,19 +242,27 @@ struct TodayView: View {
                 }
             }
 
-            HStack {
-                Text("Capture a new idea")
-                    .font(.caption)
-                    .foregroundStyle(WhisperTheme.mutedInk)
-                Spacer()
-                Text("⌘I")
-                    .font(.system(.caption2, design: .monospaced).weight(.medium))
-                    .foregroundStyle(WhisperTheme.mutedInk)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(WhisperTheme.sidebarSelected, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            Button(action: onCaptureIdea) {
+                HStack {
+                    Text("Capture a new idea")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color(red: 0.361, green: 0.380, blue: 0.416))
+                    Spacer()
+                    Text("⌘I")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(WhisperTheme.mutedInk)
+                        .padding(.horizontal, 6)
+                        .frame(height: 18)
+                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                }
+                .contentShape(Rectangle())
             }
-            .padding(.top, 10)
+            .buttonStyle(.plain)
+            .padding(.top, 12)
         }
         .padding(20)
     }
@@ -276,21 +276,21 @@ struct TodayView: View {
             )
 
             ForEach(Array(topProjects.dropFirst().prefix(3).enumerated()), id: \.element.project.id) { index, item in
-                NavigationLink {
-                    ProjectDetailView(project: item.project)
+                Button {
+                    onOpenProject(item.project)
                 } label: {
                     HStack(alignment: .top, spacing: 12) {
                         Text("\(index + 2)")
-                            .font(.system(.subheadline, design: .monospaced).weight(.bold))
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
                             .foregroundStyle(WhisperTheme.accent)
                             .frame(width: 26, alignment: .leading)
 
                         VStack(alignment: .leading, spacing: 5) {
                             Text(displayName(for: item.project))
-                                .font(.subheadline.weight(.semibold))
+                                .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(WhisperTheme.ink)
                             Text(item.explanation)
-                                .font(.caption)
+                                .font(.system(size: 12))
                                 .foregroundStyle(WhisperTheme.mutedInk)
                                 .lineLimit(2)
                         }
@@ -298,16 +298,16 @@ struct TodayView: View {
                         Spacer(minLength: 10)
 
                         Image(systemName: "arrow.up.right")
-                            .font(.caption.weight(.bold))
+                            .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(WhisperTheme.accent)
                     }
                     .padding(12)
-                    .background(WhisperTheme.input, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(WhisperTheme.input, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
         }
-        .whisperPanel(padding: 16, radius: 18)
+        .whisperPanel(padding: 16, radius: 14)
     }
 
     private func modeBadge(title: String, color: Color) -> some View {
@@ -316,42 +316,43 @@ struct TodayView: View {
                 .fill(color)
                 .frame(width: 6, height: 6)
             Text(title)
-                .font(.system(.caption2, design: .monospaced).weight(.bold))
-                .tracking(0.8)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
         }
-        .foregroundStyle(color.opacity(0.95))
+        .foregroundStyle(color)
         .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .frame(height: 24)
+        .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(color.opacity(0.28), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(color.opacity(0.30), lineWidth: 1)
         )
     }
 
-    private func timeWindow(title: String, range: String, color: Color, isActive: Bool) -> some View {
+    private func timeWindow(title: String, range: String, color: Color, isActive: Bool, flex: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
                     .fill(color)
                     .frame(width: 6, height: 6)
-                Text(title.uppercased())
-                    .font(.system(.caption2, design: .monospaced).weight(.bold))
-                    .tracking(0.7)
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(isActive ? Color(red: 0.498, green: 0.690, blue: 1.000) : Color(red: 0.541, green: 0.561, blue: 0.596))
             }
+
             Text(range)
-                .font(.system(.caption2, design: .monospaced).weight(.medium))
-                .foregroundStyle(isActive ? color.opacity(0.9) : WhisperTheme.mutedInk)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(isActive ? Color(red: 0.541, green: 0.706, blue: 1.000) : Color(red: 0.361, green: 0.380, blue: 0.416))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .background(isActive ? color.opacity(0.12) : WhisperTheme.input.opacity(0.84), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+        .background(isActive ? color.opacity(0.10) : Color(red: 0.098, green: 0.102, blue: 0.118), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(isActive ? color.opacity(0.28) : WhisperTheme.border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(isActive ? color.opacity(0.34) : Color.white.opacity(0.05), lineWidth: 1)
         )
-        .opacity(isActive ? 1 : 0.72)
+        .opacity(isActive ? 1 : 0.62)
+        .layoutPriority(flex)
     }
 
     private func toggle(_ loop: TodayLoop) {
@@ -369,6 +370,10 @@ struct TodayView: View {
         case 12..<17: return "Good afternoon, Emmanuel"
         default: return "Good evening, Emmanuel"
         }
+    }
+
+    private var nextScore: String {
+        "\(topProjects.first?.score ?? 0)"
     }
 
     private func displayName(for project: Project) -> String {
@@ -401,9 +406,4 @@ private struct TodayLoop: Identifiable {
     let tag: String
     let color: Color
     let isDone: Bool
-}
-
-#Preview {
-    TodayView()
-        .modelContainer(for: Project.self, inMemory: true)
 }

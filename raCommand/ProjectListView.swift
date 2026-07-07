@@ -2,226 +2,139 @@
 //  ProjectListView.swift
 //  raCommand
 //
-//  Compact project command center with native macOS utility chrome.
+//  Linear-style project board for the app shell.
 //
 
 import SwiftUI
-import SwiftData
-import UniformTypeIdentifiers
 
 struct ProjectListView: View {
-    @Environment(\.modelContext) private var context
-    @Query(sort: \Project.lastUpdated, order: .reverse) private var projects: [Project]
-
-    @State private var showAdd = false
-    @State private var showCSVImporter = false
-    @State private var showJSONImporter = false
-    @State private var showPasteSheet = false
-    @State private var showGitHubSheet = false
-    @State private var showPreview = false
-    @State private var previewTitle = ""
-    @State private var previewRows: [ProjectImportRow] = []
-    @State private var importErrorMessage: String?
-    @State private var searchText = ""
-
-    private var filteredProjects: [Project] {
-        let base = searchText.isEmpty ? projects : projects.filter {
-            $0.name.localizedCaseInsensitiveContains(searchText) ||
-            $0.clientName.localizedCaseInsensitiveContains(searchText)
-        }
-        return base.sorted { lhs, rhs in
-            if lhs.isActiveThread != rhs.isActiveThread {
-                return lhs.isActiveThread && !rhs.isActiveThread
-            }
-            return lhs.lastUpdated > rhs.lastUpdated
-        }
-    }
+    let projects: [Project]
+    @Binding var searchText: String
+    let onSelectProject: (Project) -> Void
+    let onCreateProject: () -> Void
+    let onImportCSV: () -> Void
+    let onImportJSON: () -> Void
+    let onPasteList: () -> Void
+    let onImportGitHub: () -> Void
+    let onDeleteProject: (Project) -> Void
 
     private var gridColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 320, maximum: 440), spacing: 16, alignment: .top)]
-    }
-
-    private var summaryColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 130, maximum: 180), spacing: 12)]
+        [GridItem(.adaptive(minimum: 300, maximum: 360), spacing: 14, alignment: .top)]
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    heroPanel
+        VStack(alignment: .leading, spacing: 20) {
+            header
+            searchField
 
-                    if projects.isEmpty {
-                        WhisperEmptyState(
-                            icon: "folder.badge.plus",
-                            title: "No projects yet",
-                            message: "Start with a single project or pull your repos in from GitHub to build the command desk."
-                        )
-                    } else if filteredProjects.isEmpty {
-                        WhisperEmptyState(
-                            icon: "magnifyingglass",
-                            title: "No matches",
-                            message: "Try a broader search or clear the filter to bring the full project board back."
-                        )
-                    } else {
-                        WhisperSectionTitle(
-                            eyebrow: "Live board",
-                            title: "Project board",
-                            detail: "\(filteredProjects.count) tracked projects. Active Codex threads float to the top."
-                        )
-                        .padding(.horizontal, 4)
-
-                        LazyVGrid(columns: gridColumns, spacing: 16) {
-                            ForEach(filteredProjects) { project in
-                                NavigationLink {
-                                    ProjectDetailView(project: project)
-                                } label: {
-                                    ProjectCard(project: project)
-                                }
-                                .buttonStyle(.plain)
-                                .contextMenu {
-                                    Button(role: .destructive) {
-                                        delete(project)
-                                    } label: {
-                                        Label("Delete Project", systemImage: "trash")
-                                    }
-                                }
+            if projects.isEmpty {
+                WhisperEmptyState(
+                    icon: searchText.isEmpty ? "folder.badge.plus" : "magnifyingglass",
+                    title: searchText.isEmpty ? "No projects yet" : "No matches",
+                    message: searchText.isEmpty
+                        ? "Start with a project or import a working set to build the board."
+                        : "Try a broader search or clear the filter."
+                )
+            } else {
+                LazyVGrid(columns: gridColumns, spacing: 14) {
+                    ForEach(projects) { project in
+                        Button {
+                            onSelectProject(project)
+                        } label: {
+                            ProjectCard(project: project)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                onDeleteProject(project)
+                            } label: {
+                                Label("Delete Project", systemImage: "trash")
                             }
                         }
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 14)
-                .padding(.bottom, 36)
             }
-            .whisperShell()
-            .quickIdeaToolbar()
-            .navigationTitle("Projects")
-            .platformNavigationTitleDisplayMode(.large)
-            .platformSearchable(text: $searchText, prompt: "Search projects")
-            .toolbar {
-                ToolbarItemGroup(placement: .platformNavigationTrailing) {
-                    Menu {
-                        Button {
-                            showCSVImporter = true
-                        } label: {
-                            Label("Import CSV", systemImage: "doc.text")
-                        }
-                        Button {
-                            showJSONImporter = true
-                        } label: {
-                            Label("Import JSON", systemImage: "curlybraces")
-                        }
-                        Button {
-                            showPasteSheet = true
-                        } label: {
-                            Label("Paste List", systemImage: "doc.on.clipboard")
-                        }
-                        Button {
-                            showGitHubSheet = true
-                        } label: {
-                            Label("Import from GitHub", systemImage: "arrow.down.circle")
-                        }
-                    } label: {
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Projects")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(Color(red: 0.941, green: 0.949, blue: 0.961))
+                Text("\(projects.count) active projects")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
+            }
+
+            Spacer(minLength: 16)
+
+            HStack(spacing: 10) {
+                Menu {
+                    Button("Import CSV", action: onImportCSV)
+                    Button("Import JSON", action: onImportJSON)
+                    Button("Paste List", action: onPasteList)
+                    Button("Import from GitHub", action: onImportGitHub)
+                } label: {
+                    HStack(spacing: 8) {
                         Image(systemName: "square.and.arrow.down")
+                        Text("Import")
                     }
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .buttonStyle(.plain)
 
-                    Button {
-                        showAdd = true
-                    } label: {
-                        Image(systemName: "plus")
+                Button(action: onCreateProject) {
+                    HStack(spacing: 8) {
+                        Text("+ New")
+                        Text("⌘N")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.75))
                     }
+                    .font(.system(size: 13, weight: .semibold))
+                    .padding(.horizontal, 14)
+                    .frame(height: 32)
+                    .background(WhisperTheme.accent, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .foregroundStyle(.white)
                 }
-            }
-            .sheet(isPresented: $showAdd) { AddProjectView() }
-            .sheet(isPresented: $showPasteSheet) {
-                PasteImportView { rows in
-                    previewTitle = "Paste Preview"
-                    previewRows = rows
-                    showPreview = true
-                }
-            }
-            .sheet(isPresented: $showGitHubSheet) { GitHubImportView() }
-            .sheet(isPresented: $showPreview) {
-                ProjectImportPreviewView(title: previewTitle, rows: previewRows) {
-                    _ = ProjectImportService.insert(rows: previewRows, into: context)
-                }
-            }
-            .fileImporter(isPresented: $showCSVImporter, allowedContentTypes: [.commaSeparatedText, .plainText]) { result in
-                handleFileImport(result, kind: .csv)
-            }
-            .fileImporter(isPresented: $showJSONImporter, allowedContentTypes: [.json]) { result in
-                handleFileImport(result, kind: .json)
-            }
-            .alert("Import Error", isPresented: Binding(
-                get: { importErrorMessage != nil },
-                set: { if !$0 { importErrorMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(importErrorMessage ?? "")
+                .buttonStyle(.plain)
             }
         }
     }
 
-    private var heroPanel: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("COMMAND DESK")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(WhisperTheme.accent)
-                Text("Projects and threads that need a clear next move.")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(WhisperTheme.ink)
-                Text("Tracked repos live here, and active Codex threads rise to the top so the board matches the actual workflow.")
-                    .font(.callout)
-                    .foregroundStyle(WhisperTheme.mutedInk)
-            }
+    private var searchField: some View {
+        ZStack(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color(red: 0.075, green: 0.078, blue: 0.090))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                )
 
-            LazyVGrid(columns: summaryColumns, spacing: 12) {
-                WhisperMetricPill(label: "Total", value: "\(projects.count)", tone: WhisperTheme.info)
-                WhisperMetricPill(label: "Threads", value: "\(projects.filter { $0.isActiveThread }.count)", tone: WhisperTheme.success)
-                WhisperMetricPill(label: "Moving", value: "\(projects.filter { $0.status == .yellow }.count)", tone: WhisperTheme.warning)
-                WhisperMetricPill(label: "Blocked", value: "\(projects.filter { $0.status == .red }.count)", tone: WhisperTheme.danger)
-            }
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Color(red: 0.361, green: 0.380, blue: 0.416))
+                .padding(.leading, 12)
 
-            HStack(spacing: 8) {
-                Label("Use search to narrow the board", systemImage: "magnifyingglass")
-                Spacer(minLength: 12)
-                Label("Long-press a card to delete", systemImage: "hand.tap")
-            }
-            .font(.caption.weight(.medium))
-            .foregroundStyle(WhisperTheme.mutedInk)
+            TextField("Search projects…", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundStyle(WhisperTheme.ink)
+                .padding(.leading, 38)
+                .padding(.trailing, 12)
         }
-        .whisperPanel(padding: 16, radius: 10)
-    }
-
-    private func delete(_ project: Project) {
-        context.delete(project)
-    }
-
-    private enum ImportKind { case csv, json }
-
-    private func handleFileImport(_ result: Result<URL, Error>, kind: ImportKind) {
-        do {
-            let url = try result.get()
-            let needsAccess = url.startAccessingSecurityScopedResource()
-            defer { if needsAccess { url.stopAccessingSecurityScopedResource() } }
-            let data = try Data(contentsOf: url)
-            let rows: [ProjectImportRow]
-            switch kind {
-            case .csv:
-                rows = try ProjectImportService.parseCSV(data: data)
-                previewTitle = "CSV Preview"
-            case .json:
-                rows = try ProjectImportService.parseJSON(data: data)
-                previewTitle = "JSON Preview"
-            }
-            previewRows = rows
-            showPreview = true
-        } catch {
-            importErrorMessage = (error as? ProjectImportError)?.errorDescription ?? "Unable to import that file."
-        }
+        .frame(maxWidth: 360)
+        .frame(height: 36)
     }
 }
 
@@ -229,88 +142,95 @@ struct ProjectCard: View {
     let project: Project
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(project.status.whisperColor)
-                            .frame(width: 9, height: 9)
-                        Text(project.status.rawValue.capitalized)
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(project.status.whisperColor)
-                    }
-
-                    Text(project.name)
-                        .font(.system(.title3, design: .rounded).weight(.bold))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(displayName)
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(WhisperTheme.ink)
-                        .multilineTextAlignment(.leading)
+                        .lineLimit(1)
+
+                    Text(clientCode)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(red: 0.361, green: 0.380, blue: 0.416))
                 }
 
-                Spacer(minLength: 12)
+                Spacer(minLength: 8)
 
-                Text(project.category.rawValue.capitalized)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(project.category.whisperColor)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(project.category.whisperColor.opacity(0.12), in: Capsule())
+                Text(statusLabel)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 7)
+                    .frame(height: 20)
+                    .background(project.status.whisperColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .foregroundStyle(project.status.whisperColor)
             }
 
-            HStack(spacing: 14) {
-                if !project.clientName.isEmpty {
-                    Label(project.clientName, systemImage: "building.2")
-                        .lineLimit(1)
-                }
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color(red: 0.541, green: 0.561, blue: 0.596))
+                    .frame(width: 4, height: 4)
 
-                Label(project.lastUpdated.formatted(date: .abbreviated, time: .omitted), systemImage: "clock")
+                Text(nextAction)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color(red: 0.765, green: 0.780, blue: 0.804))
                     .lineLimit(1)
             }
-            .font(.caption.weight(.medium))
-            .foregroundStyle(WhisperTheme.mutedInk)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Next move")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(WhisperTheme.mutedInk)
-                Text(project.nextAction.isEmpty ? "Define the next action to keep this thread moving." : project.nextAction)
-                    .font(.subheadline)
-                    .foregroundStyle(project.nextAction.isEmpty ? WhisperTheme.mutedInk : WhisperTheme.ink)
-                    .lineLimit(3)
-            }
+            .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .background(project.status.whisperColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.white.opacity(0.05), lineWidth: 1)
+            )
 
-            HStack(spacing: 10) {
-                metaPill(icon: "star.fill", text: "V \(project.valueScore)", color: WhisperTheme.accent)
+            HStack {
+                Text(project.category.rawValue.capitalized)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 7)
+                    .frame(height: 18)
+                    .background(WhisperTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .foregroundStyle(Color(red: 0.498, green: 0.690, blue: 1.000))
 
-                if let targetDate = project.targetDate {
-                    metaPill(icon: "calendar", text: targetDate.formatted(date: .abbreviated, time: .omitted), color: WhisperTheme.info)
-                }
+                Spacer(minLength: 8)
 
-                if project.delegatable {
-                    metaPill(icon: "arrow.triangle.branch", text: "Delegatable", color: WhisperTheme.success)
-                }
-
-                if project.isActiveThread {
-                    metaPill(icon: "rectangle.stack", text: "Thread", color: WhisperTheme.info)
-                }
+                Text(valueLabel)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
             }
+            .padding(.top, 4)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .whisperPanel()
+        .padding(16)
+        .background(Color(red: 0.075, green: 0.078, blue: 0.090), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 
-    private func metaPill(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-            Text(text)
+    private var displayName: String {
+        let trimmed = project.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled project" : trimmed
+    }
+
+    private var clientCode: String {
+        let trimmed = project.clientName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "NO CLIENT" : trimmed.uppercased()
+    }
+
+    private var statusLabel: String {
+        switch project.status {
+        case .green: return "LIVE"
+        case .yellow: return "BUILD"
+        case .red: return "BLOCKED"
         }
-        .font(.caption.weight(.bold))
-        .foregroundStyle(color)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(color.opacity(0.1), in: Capsule())
+    }
+
+    private var nextAction: String {
+        let trimmed = project.nextAction.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Define the next action." : trimmed
+    }
+
+    private var valueLabel: String {
+        "V\(project.valueScore)"
     }
 }

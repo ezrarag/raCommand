@@ -317,6 +317,9 @@ struct FeedbackCard: View {
                     if let email = note.clientEmail {
                         Text(email).font(.caption).foregroundStyle(WhisperTheme.mutedInk)
                     }
+                    if let title = note.projectTitle, !title.isEmpty {
+                        Text(title).font(.caption2.weight(.semibold)).foregroundStyle(WhisperTheme.accent)
+                    }
                 }
 
                 Spacer()
@@ -366,6 +369,15 @@ struct FeedbackCard: View {
             HStack(spacing: 6) {
                 pill(note.category.capitalized, color: WhisperTheme.info)
                 pill("Pulse \(note.pulseScore)", color: WhisperTheme.accent)
+                if note.isProjectSuggestion {
+                    pill("Project suggestion", color: WhisperTheme.warning)
+                }
+                if let projectType = note.projectType, !projectType.isEmpty {
+                    pill(projectType, color: WhisperTheme.mutedInk)
+                }
+                if let contextStatus = note.agentContextStatus, !contextStatus.isEmpty {
+                    pill("Agent \(contextStatus)", color: WhisperTheme.success)
+                }
                 if let ideaCount {
                     pill("Ideas \(ideaCount)", color: WhisperTheme.warning)
                 }
@@ -415,6 +427,7 @@ struct FeedbackCard: View {
         switch note.source {
         case "loom": return "play.rectangle.fill"
         case "extension": return "puzzlepiece.extension"
+        case "workspace-project-suggestion": return "lightbulb.fill"
         default: return "bubble.left.fill"
         }
     }
@@ -423,6 +436,7 @@ struct FeedbackCard: View {
         switch note.source {
         case "loom": return WhisperTheme.info
         case "extension": return Color.purple
+        case "workspace-project-suggestion": return WhisperTheme.warning
         default: return WhisperTheme.accent
         }
     }

@@ -13,6 +13,9 @@ import Foundation
 struct ClientFeedback: Identifiable, Decodable, Hashable {
     let id: String
     let projectId: String
+    let projectTitle: String?
+    let projectType: String?
+    let workspaceId: String?
     let clientName: String
     let clientEmail: String?
     let rawText: String?
@@ -26,9 +29,11 @@ struct ClientFeedback: Identifiable, Decodable, Hashable {
     let pulseScore: Int
     let status: String
     let source: String
+    let agentContextStatus: String?
     let createdAt: String?
 
     var urgencyLevel: UrgencyLevel { UrgencyLevel(rawValue: urgency) ?? .medium }
+    var isProjectSuggestion: Bool { source == "workspace-project-suggestion" }
 
     enum UrgencyLevel: String {
         case low, medium, high

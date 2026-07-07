@@ -11,6 +11,8 @@ struct QuickIdeaView: View {
     @Environment(\.dismiss) private var dismiss
 
     let onSaved: (DesktopClient) -> Void
+    var onClose: (() -> Void)? = nil
+    var embedded: Bool = false
 
     @State private var clients: [DesktopClient] = []
     @State private var selectedClientId: String?
@@ -34,53 +36,63 @@ struct QuickIdeaView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                WhisperBackground()
+        Group {
+            if embedded {
+                panel
+            } else {
+                NavigationStack {
+                    ZStack {
+                        WhisperBackground()
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        header
-
-                        if let errorMessage {
-                            errorBanner(errorMessage)
-                                .padding(.horizontal, 16)
-                                .padding(.top, 14)
+                        ScrollView {
+                            panel
                         }
-
-                        clientGrid
-                        composer
-                        footer
                     }
-                    .frame(maxWidth: 452)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [WhisperTheme.panelStrong, WhisperTheme.panel],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.42), radius: 36, x: 0, y: 18)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 24)
+                    .navigationTitle("Quick Idea")
+                    .platformNavigationTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { close() }
+                        }
+                    }
                 }
             }
-            .navigationTitle("Quick Idea")
-            .platformNavigationTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-            }
-            .task { await loadClientsIfNeeded() }
         }
+        .task { await loadClientsIfNeeded() }
+    }
+
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+
+            if let errorMessage {
+                errorBanner(errorMessage)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+            }
+
+            clientGrid
+            composer
+            footer
+        }
+        .frame(maxWidth: 452)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [WhisperTheme.panelStrong, WhisperTheme.panel],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.42), radius: 36, x: 0, y: 18)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 24)
     }
 
     private var header: some View {
@@ -110,12 +122,25 @@ struct QuickIdeaView: View {
 
             Spacer()
 
-            Text("esc")
-                .font(.system(.caption2, design: .monospaced).weight(.medium))
-                .foregroundStyle(WhisperTheme.mutedInk)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background(WhisperTheme.sidebarSelected, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            HStack(spacing: 7) {
+                Text("esc")
+                    .font(.system(.caption2, design: .monospaced).weight(.medium))
+                    .foregroundStyle(WhisperTheme.mutedInk)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(WhisperTheme.sidebarSelected, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+
+                Button {
+                    close()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(WhisperTheme.mutedInk)
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+            }
         }
         .padding(16)
         .overlay(alignment: .bottom) {
@@ -173,6 +198,19 @@ struct QuickIdeaView: View {
             }
         }
         .padding(16)
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(WhisperTheme.danger)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(WhisperTheme.danger)
+            Spacer()
+        }
+        .padding(14)
+        .background(WhisperTheme.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var composer: some View {
@@ -241,6 +279,7 @@ struct QuickIdeaView: View {
             .buttonStyle(.plain)
             .disabled(!canSave)
             .opacity(canSave ? 1 : 0.6)
+            .keyboardShortcut(.return, modifiers: [.command])
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
@@ -250,19 +289,6 @@ struct QuickIdeaView: View {
                 .fill(WhisperTheme.border)
                 .frame(height: 1)
         }
-    }
-
-    private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(WhisperTheme.danger)
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(WhisperTheme.danger)
-            Spacer()
-        }
-        .padding(14)
-        .background(WhisperTheme.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func loadClientsIfNeeded() async {
@@ -294,12 +320,20 @@ struct QuickIdeaView: View {
         do {
             try await ClientNoteService.submitIdea(clientId: selectedClient.id, text: trimmed)
             onSaved(selectedClient)
-            dismiss()
+            close()
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
 
         isSaving = false
+    }
+
+    private func close() {
+        if let onClose {
+            onClose()
+        } else {
+            dismiss()
+        }
     }
 }
 

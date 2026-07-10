@@ -26,9 +26,15 @@ enum ProjectDetailWorkbenchTab: String, CaseIterable, Identifiable {
 }
 
 struct ProjectDetailView: View {
+    @Environment(\.modelContext) private var modelContext
     @Bindable var project: Project
     @Binding var detailTab: ProjectDetailWorkbenchTab
     let onBack: () -> Void
+
+    @State private var showCreateRepoSheet = false
+    @State private var isOpeningCodex = false
+    @State private var workspaceMessage: String?
+    @State private var workspaceError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -268,6 +274,8 @@ struct ProjectDetailView: View {
                 }
             }
 
+            repoActionPanel
+
             Toggle(isOn: $project.isActiveThread) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Active Codex thread")
@@ -283,6 +291,144 @@ struct ProjectDetailView: View {
             .frame(maxWidth: 720, alignment: .leading)
         }
         .frame(maxWidth: 720, alignment: .leading)
+        .sheet(isPresented: $showCreateRepoSheet) {
+            CreateProjectRepositorySheet(project: project) { workspacePath in
+                if !workspacePath.isEmpty {
+                    project.localPath = workspacePath
+                    project.isActiveThread = true
+                    project.lastUpdated = Date()
+                    project.lastReviewed = Date()
+                    workspaceMessage = "Repository ready and Codex opened."
+                    workspaceError = nil
+                }
+            }
+        }
+    }
+
+    private var repoActionPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                if project.repoURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button("Create Repo + Open Codex") {
+                        showCreateRepoSheet = true
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .background(WhisperTheme.accent, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .foregroundStyle(.white)
+                } else {
+                    Button {
+                        Task { await openProjectInCodex() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isOpeningCodex {
+                                ProgressView()
+                                    .tint(.white)
+                                    .scaleEffect(0.8)
+                            }
+                            Text(openInCodexLabel)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(height: 32)
+                        .background(WhisperTheme.accent, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isOpeningCodex)
+
+                    if !project.repoURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button("Create Replacement Repo") {
+                            showCreateRepoSheet = true
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(WhisperTheme.mutedInk)
+                    }
+                }
+            }
+
+            if let workspaceMessage, !workspaceMessage.isEmpty {
+                inlineBanner(message: workspaceMessage, color: WhisperTheme.success, icon: "checkmark.circle.fill", emphasizeInk: true)
+            }
+
+            if let workspaceError, !workspaceError.isEmpty {
+                inlineBanner(message: workspaceError, color: WhisperTheme.danger, icon: "exclamationmark.triangle.fill", emphasizeInk: false)
+            }
+        }
+        .frame(maxWidth: 720, alignment: .leading)
+    }
+
+    private var openInCodexLabel: String {
+        let repoURL = project.repoURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if repoURL.isEmpty {
+            return "Create Repo + Open Codex"
+        }
+
+        let localPath = LocalWorkspaceService.normalizedWorkspacePath(project.localPath)
+        if !localPath.isEmpty, LocalWorkspaceService.workspaceExists(at: localPath) {
+            return "Open in Codex"
+        }
+
+        return "Clone + Open Codex"
+    }
+
+    private func inlineBanner(message: String, color: Color, icon: String, emphasizeInk: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundStyle(emphasizeInk ? WhisperTheme.ink : color)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(color.opacity(0.22), lineWidth: 1)
+        )
+    }
+
+    @MainActor
+    private func openProjectInCodex() async {
+        let repoURL = project.repoURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !repoURL.isEmpty else {
+            workspaceError = "Add or create a GitHub repository first."
+            workspaceMessage = nil
+            return
+        }
+
+        isOpeningCodex = true
+        workspaceError = nil
+        workspaceMessage = nil
+        defer { isOpeningCodex = false }
+
+        do {
+            let suggestedPath = LocalWorkspaceService.suggestedLocalPath(for: repoURL)
+            let preferredPath = LocalWorkspaceService.normalizedWorkspacePath(project.localPath).isEmpty
+                ? suggestedPath
+                : LocalWorkspaceService.normalizedWorkspacePath(project.localPath)
+
+            let workspacePath = try LocalWorkspaceService.ensureLocalClone(
+                repoURL: repoURL,
+                preferredPath: preferredPath,
+                rootPath: LocalWorkspaceService.defaultWorkspaceRoot
+            )
+
+            try LocalWorkspaceService.openInCodex(path: workspacePath)
+
+            project.localPath = workspacePath
+            project.isActiveThread = true
+            project.lastUpdated = Date()
+            project.lastReviewed = Date()
+            try modelContext.save()
+
+            workspaceMessage = "Workspace ready at \(workspacePath)"
+        } catch {
+            workspaceError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
     }
 
     private func shellField<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -348,6 +494,277 @@ struct ProjectDetailView: View {
         case .yellow: return "Build"
         case .red: return "Blocked"
         }
+    }
+}
+
+private struct CreateProjectRepositorySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+
+    @Bindable var project: Project
+    let onComplete: (String) -> Void
+
+    @FocusState private var isRepoNameFocused: Bool
+
+    @State private var repoName: String
+    @State private var isCreating = false
+    @State private var stageMessage: String?
+    @State private var errorMessage: String?
+
+    init(project: Project, onComplete: @escaping (String) -> Void) {
+        self.project = project
+        self.onComplete = onComplete
+        _repoName = State(initialValue: Self.defaultRepoName(for: project))
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                WhisperBackground()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("CREATE REPOSITORY")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(WhisperTheme.accent)
+
+                            Text("Provision GitHub, local workspace, and Codex.")
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(WhisperTheme.ink)
+
+                            Text("This restores the old raCommand flow: create the GitHub repo, clone it into `~/Desktop/local dev`, and open a Codex thread for the workspace.")
+                                .font(.callout)
+                                .foregroundStyle(WhisperTheme.mutedInk)
+                        }
+                        .whisperPanel(padding: 16, radius: 10)
+
+                        VStack(alignment: .leading, spacing: 16) {
+                            WhisperSectionTitle(
+                                eyebrow: "Repository",
+                                title: "GitHub repo name",
+                                detail: "The project will be linked to this repo and local workspace."
+                            )
+
+                            TextField("quick-quote-scheduler", text: $repoName)
+                                .platformDisableTextInputAutocapitalization()
+                                .autocorrectionDisabled()
+                                .focused($isRepoNameFocused)
+                                .foregroundStyle(WhisperTheme.ink)
+                                .whisperInsetField()
+                                .onSubmit {
+                                    if canSubmit {
+                                        Task { await createRepositoryAndThread() }
+                                    }
+                                }
+
+                            if !normalizedRepoName.isEmpty {
+                                detailRow(icon: "shippingbox", label: "GitHub repo", value: normalizedRepoName)
+                                detailRow(icon: "folder", label: "Local workspace", value: suggestedWorkspacePath)
+                                detailRow(icon: "rectangle.stack.badge.play", label: "Next step", value: "Open a Codex thread for the cloned workspace")
+                            }
+
+                            if let validationMessage {
+                                Text(validationMessage)
+                                    .font(.caption)
+                                    .foregroundStyle(WhisperTheme.warning)
+                            }
+                        }
+                        .whisperPanel()
+
+                        if let stageMessage, isCreating {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                    .tint(WhisperTheme.accent)
+                                Text(stageMessage)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(WhisperTheme.ink)
+                            }
+                            .whisperPanel()
+                        }
+
+                        if let errorMessage {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label("Repository creation failed", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(WhisperTheme.danger)
+
+                                Text(errorMessage)
+                                    .font(.subheadline)
+                                    .foregroundStyle(WhisperTheme.mutedInk)
+                            }
+                            .whisperPanel()
+                        }
+                    }
+                    .padding(24)
+                }
+            }
+            .navigationTitle("Create Repository")
+            .platformNavigationTitleDisplayMode(.inline)
+            .tint(WhisperTheme.accent)
+            .fontDesign(.default)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    if isCreating {
+                        ProgressView()
+                            .tint(WhisperTheme.accent)
+                    } else {
+                        Button("Create") {
+                            Task { await createRepositoryAndThread() }
+                        }
+                        .disabled(!canSubmit)
+                    }
+                }
+
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .onAppear {
+                isRepoNameFocused = true
+            }
+        }
+    }
+
+    private var normalizedRepoName: String {
+        slugifiedRepoName(from: repoName)
+    }
+
+    private var suggestedWorkspacePath: String {
+        URL(fileURLWithPath: LocalWorkspaceService.defaultWorkspaceRoot, isDirectory: true)
+            .appendingPathComponent(normalizedRepoName, isDirectory: true)
+            .path
+    }
+
+    private var validationMessage: String? {
+        let trimmed = repoName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.isEmpty {
+            return nil
+        }
+
+        if normalizedRepoName.isEmpty {
+            return "Enter at least one letter or number for the repo name."
+        }
+
+        if LocalWorkspaceService.workspaceExists(at: suggestedWorkspacePath) {
+            return "A local folder already exists at \(suggestedWorkspacePath). Choose a different repo name."
+        }
+
+        return nil
+    }
+
+    private var canSubmit: Bool {
+        !isCreating && !normalizedRepoName.isEmpty && validationMessage == nil
+    }
+
+    @ViewBuilder
+    private func detailRow(icon: String, label: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(WhisperTheme.accent)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(label.uppercased())
+                    .font(.caption2.weight(.bold))
+                    .tracking(0.8)
+                    .foregroundStyle(WhisperTheme.mutedInk)
+
+                Text(value)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(WhisperTheme.ink)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    @MainActor
+    private func createRepositoryAndThread() async {
+        guard canSubmit else { return }
+
+        guard let token = KeychainService.loadGitHubToken(), !token.isEmpty else {
+            errorMessage = "No GitHub token found. Add one in Projects > Import > GitHub Import."
+            return
+        }
+
+        isCreating = true
+        stageMessage = "Creating GitHub repository..."
+        errorMessage = nil
+        defer {
+            stageMessage = nil
+            isCreating = false
+        }
+
+        do {
+            let repo = try await GitHubActionsService.createRepo(
+                name: normalizedRepoName,
+                description: project.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                isPrivate: false,
+                token: token
+            )
+
+            project.repoURL = repo.htmlURL
+            if project.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                project.name = repo.name
+            }
+            project.lastUpdated = Date()
+            try modelContext.save()
+
+            stageMessage = "Cloning into local dev..."
+            let workspacePath = try LocalWorkspaceService.ensureLocalClone(
+                repoURL: repo.cloneURL,
+                preferredPath: suggestedWorkspacePath,
+                rootPath: LocalWorkspaceService.defaultWorkspaceRoot
+            )
+
+            stageMessage = "Opening Codex thread..."
+            try LocalWorkspaceService.openInCodex(path: workspacePath)
+
+            project.localPath = workspacePath
+            project.isActiveThread = true
+            project.lastUpdated = Date()
+            project.lastReviewed = Date()
+            try modelContext.save()
+
+            onComplete(workspacePath)
+            dismiss()
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func slugifiedRepoName(from rawValue: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._"))
+        let unicodeScalars = trimmed.lowercased().unicodeScalars.map { scalar -> String in
+            if allowed.contains(scalar) {
+                return String(scalar)
+            }
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                return "-"
+            }
+            return "-"
+        }
+
+        return unicodeScalars.joined()
+            .replacingOccurrences(of: "-{2,}", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-."))
+    }
+
+    private static func defaultRepoName(for project: Project) -> String {
+        let trimmedName = project.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty {
+            return trimmedName
+        }
+
+        if let repoName = LocalWorkspaceService.repoName(from: project.repoURL) {
+            return repoName
+        }
+
+        return ""
     }
 }
 

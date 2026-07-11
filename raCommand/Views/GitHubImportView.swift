@@ -177,12 +177,62 @@ struct GitHubImportView: View {
                     }
 
                     if let error = errorMessage {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(WhisperTheme.danger)
-                            Text(error)
-                                .font(.subheadline)
-                                .foregroundStyle(WhisperTheme.danger)
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(WhisperTheme.danger)
+                                Text(error)
+                                    .font(.subheadline)
+                                    .foregroundStyle(WhisperTheme.danger)
+                            }
+
+                            if error.contains("SSO") || error.contains("expired") || error.contains("revoked") || error.contains("rejected") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Try one of these fixes:")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(WhisperTheme.mutedInk)
+
+                                    Text("1. Open GitHub token settings and authorize the token for SSO if your repos live under an organization.")
+                                        .font(.caption)
+                                        .foregroundStyle(WhisperTheme.mutedInk)
+
+                                    Text("2. If the token is old, create a new classic PAT with `repo` or `public_repo`, or a fine-grained token with repository access and Metadata read.")
+                                        .font(.caption)
+                                        .foregroundStyle(WhisperTheme.mutedInk)
+                                }
+
+                                HStack(spacing: 10) {
+                                    Button("Open Token Settings") {
+                                        if let url = URL(string: "https://github.com/settings/tokens") {
+                                            PlatformSystemServices.open(url)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.horizontal, 12)
+                                    .frame(height: 30)
+                                    .background(WhisperTheme.input, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(WhisperTheme.border, lineWidth: 1)
+                                    )
+
+                                    Button("Clear Saved Token") {
+                                        KeychainService.deleteGitHubToken()
+                                        token = ""
+                                        repos = []
+                                        hasExistingToken = false
+                                        tokenSaveState = .idle
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.horizontal, 12)
+                                    .frame(height: 30)
+                                    .background(WhisperTheme.input, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(WhisperTheme.border, lineWidth: 1)
+                                    )
+                                }
+                            }
                         }
                         .whisperPanel()
                     }

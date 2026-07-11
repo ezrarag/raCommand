@@ -236,60 +236,59 @@ struct MainTabView: View {
             VStack(spacing: 0) {
                 topBar
 
-                ScrollView {
-                    Group {
-                        switch activeSection {
-                        case .projects:
-                            if let selectedProject {
-                                ProjectDetailView(
-                                    project: selectedProject,
-                                    detailTab: $detailTab,
-                                    onBack: { selectedProjectKey = nil }
+                if activeSection == .repos {
+                    RepoManagerView()
+                } else {
+                    ScrollView {
+                        Group {
+                            switch activeSection {
+                            case .projects:
+                                if let selectedProject {
+                                    ProjectDetailView(
+                                        project: selectedProject,
+                                        detailTab: $detailTab,
+                                        onBack: { selectedProjectKey = nil }
+                                    )
+                                } else {
+                                    ProjectListView(
+                                        projects: filteredProjects,
+                                        searchText: $projectSearch,
+                                        onSelectProject: openProject,
+                                        onCreateProject: { showAdd = true },
+                                        onImportCSV: { showCSVImporter = true },
+                                        onImportJSON: { showJSONImporter = true },
+                                        onPasteList: { showPasteSheet = true },
+                                        onImportGitHub: { showGitHubSheet = true },
+                                        onDeleteProject: deleteProject
+                                    )
+                                }
+                            case .today:
+                                TodayView(
+                                    projects: projects,
+                                    onOpenProject: openProject,
+                                    onCaptureIdea: { showQuickIdea = true }
                                 )
-                            } else {
-                                ProjectListView(
-                                    projects: filteredProjects,
-                                    searchText: $projectSearch,
-                                    onSelectProject: openProject,
-                                    onCreateProject: { showAdd = true },
-                                    onImportCSV: { showCSVImporter = true },
-                                    onImportJSON: { showJSONImporter = true },
-                                    onPasteList: { showPasteSheet = true },
-                                    onImportGitHub: { showGitHubSheet = true },
-                                    onDeleteProject: deleteProject
+                            case .repos:
+                                EmptyView()
+                            case .pulse:
+                                ShellStubView(
+                                    title: "Pulse",
+                                    detail: "Ranked urgency and AI next-step advisor.",
+                                    eyebrow: "v1.1",
+                                    description: "Pulse will inherit this shell once the core workflow is proven. For now, the redesign keeps the destination visible without carrying forward the legacy dashboard."
+                                )
+                            case .settings:
+                                ShellStubView(
+                                    title: "Settings",
+                                    detail: "App memory, build log, and idea inbox.",
+                                    eyebrow: "v1.1",
+                                    description: "Settings remains part of the shell so the information architecture is stable, but the redesign of app memory and logs follows the MVP release."
                                 )
                             }
-                        case .today:
-                            TodayView(
-                                projects: projects,
-                                onOpenProject: openProject,
-                                onCaptureIdea: { showQuickIdea = true }
-                            )
-                        case .repos:
-                            ShellStubView(
-                                title: "Repos",
-                                detail: "Local mirror manager and Codex workspace surface.",
-                                eyebrow: "v1.1",
-                                description: "This section stays visible in the new shell, but the full repo operations surface is deferred until after the Projects and Today MVP ships."
-                            )
-                        case .pulse:
-                            ShellStubView(
-                                title: "Pulse",
-                                detail: "Ranked urgency and AI next-step advisor.",
-                                eyebrow: "v1.1",
-                                description: "Pulse will inherit this shell once the core workflow is proven. For now, the redesign keeps the destination visible without carrying forward the legacy dashboard."
-                            )
-                        case .settings:
-                            ShellStubView(
-                                title: "Settings",
-                                detail: "App memory, build log, and idea inbox.",
-                                eyebrow: "v1.1",
-                                description: "Settings remains part of the shell so the information architecture is stable, but the redesign of app memory and logs follows the MVP release."
-                            )
                         }
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 32)
                     }
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 32)
                 }
             }
 

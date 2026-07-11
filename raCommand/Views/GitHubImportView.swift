@@ -252,7 +252,7 @@ struct GitHubImportView: View {
             repos = try await GitHubService.fetchRepos(token: activeToken)
             selectedRepoIds = []
         } catch {
-            errorMessage = "Could not fetch repos. Check your token has 'repo' scope."
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Could not fetch repos from GitHub."
         }
         isLoading = false
     }

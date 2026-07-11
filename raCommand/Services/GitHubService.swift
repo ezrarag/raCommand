@@ -21,6 +21,30 @@ struct GitHubRepo: Identifiable, Decodable, Hashable {
     }
 }
 
+private struct GitHubAPIErrorResponse: Decodable {
+    let message: String
+}
+
+enum GitHubServiceError: LocalizedError {
+    case authenticationRequired
+    case insufficientPermissions(String)
+    case apiError(String)
+    case invalidResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .authenticationRequired:
+            return "GitHub rejected the saved token. It may be expired, revoked, or missing SSO authorization."
+        case .insufficientPermissions(let message):
+            return message
+        case .apiError(let message):
+            return message
+        case .invalidResponse:
+            return "GitHub returned an unexpected response."
+        }
+    }
+}
+
 enum GitHubService {
     static func fetchRepos(token: String) async throws -> [GitHubRepo] {
         var repos: [GitHubRepo] = []
@@ -37,9 +61,28 @@ enum GitHubService {
             request.setValue("raCommand", forHTTPHeaderField: "User-Agent")
 
             let (data, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse,
-               httpResponse.statusCode == 401 {
-                throw URLError(.userAuthenticationRequired)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw GitHubServiceError.invalidResponse
+            }
+
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                let message = (try? JSONDecoder().decode(GitHubAPIErrorResponse.self, from: data).message)
+                    ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+                let normalizedMessage = message.lowercased()
+
+                if httpResponse.statusCode == 401 {
+                    throw GitHubServiceError.authenticationRequired
+                }
+
+                if httpResponse.statusCode == 403 || normalizedMessage.contains("resource not accessible by personal access token") {
+                    if normalizedMessage.contains("sso") {
+                        throw GitHubServiceError.insufficientPermissions("This token needs SSO authorization for GitHub before raCommand can list repos.")
+                    }
+
+                    throw GitHubServiceError.insufficientPermissions("This token cannot list your repos. Use a classic PAT with `repo` or `public_repo`, or a fine-grained token with repository access plus Metadata read permission.")
+                }
+
+                throw GitHubServiceError.apiError(message)
             }
 
             let pageRepos = try JSONDecoder().decode([GitHubRepo].self, from: data)

@@ -95,9 +95,13 @@ struct MainTabView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            mainContent
+        VStack(spacing: 0) {
+            shellTitleBar
+
+            HStack(spacing: 0) {
+                sidebar
+                mainContent
+            }
         }
         .background(WhisperTheme.canvasTop)
         .whisperShell()
@@ -130,6 +134,36 @@ struct MainTabView: View {
             Text(importErrorMessage ?? "")
         }
         .task { seedIfNeeded() }
+    }
+
+    private var shellTitleBar: some View {
+        ZStack {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color(red: 0.925, green: 0.416, blue: 0.373))
+                    .frame(width: 12, height: 12)
+                Circle()
+                    .fill(Color(red: 0.957, green: 0.749, blue: 0.310))
+                    .frame(width: 12, height: 12)
+                Circle()
+                    .fill(Color(red: 0.380, green: 0.769, blue: 0.329))
+                    .frame(width: 12, height: 12)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+
+            Text("raCommand")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color(red: 0.435, green: 0.455, blue: 0.490))
+        }
+        .frame(height: 38)
+        .background(Color(red: 0.043, green: 0.047, blue: 0.055))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(height: 1)
+        }
     }
 
     private var sidebar: some View {

@@ -40,6 +40,9 @@ struct ReadyaimgoCommandApp: App {
             MainTabView()
                 .environment(\.modelContext, sharedModelContext)
         }
+        #if os(macOS)
+        .windowStyle(.hiddenTitleBar)
+        #endif
         .modelContainer(sharedModelContainer)
     }
 }

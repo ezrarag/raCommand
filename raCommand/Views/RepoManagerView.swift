@@ -2,15 +2,13 @@
 //  RepoManagerView.swift
 //  raCommand
 //
-//  MacWhisper-inspired design: dark sidebar feel, two-panel layout,
-//  clean rows, pill badges, in-app git clone via Process.
+//  Linear-dark repo manager shell using the existing GitHub/local workspace actions.
 //
 
 import Foundation
-import SwiftUI
 import SwiftData
+import SwiftUI
 
-// MARK: - Repo with local state
 struct RepoWithLocalState: Identifiable, Hashable {
     let repo: GitHubRepo
     let localPath: String?
@@ -19,7 +17,6 @@ struct RepoWithLocalState: Identifiable, Hashable {
     var id: Int { repo.id }
 }
 
-// MARK: - Clone operation state
 enum CloneState: Equatable {
     case idle
     case cloning
@@ -44,13 +41,12 @@ enum GitActionState: Equatable {
     }
 }
 
-// MARK: - Main View
 struct RepoManagerView: View {
     @Environment(\.modelContext) private var context
     @Query private var projects: [Project]
 
     @State private var repos: [RepoWithLocalState] = []
-    @State private var selectedRepo: RepoWithLocalState? = nil
+    @State private var selectedRepo: RepoWithLocalState?
     @State private var isLoading = false
     @State private var searchText = ""
     @State private var filterMode: FilterMode = .all
@@ -75,143 +71,84 @@ struct RepoManagerView: View {
     enum FilterMode: String, CaseIterable {
         case all = "All"
         case cloned = "Local"
-        case notCloned = "Remote Only"
+        case notCloned = "Remote"
     }
 
-    var filteredRepos: [RepoWithLocalState] {
-        var result = repos
-        if !searchText.isEmpty {
-            result = result.filter {
-                $0.repo.name.localizedCaseInsensitiveContains(searchText) ||
-                ($0.repo.description ?? "").localizedCaseInsensitiveContains(searchText)
+    private var filteredRepos: [RepoWithLocalState] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return repos
+            .filter { item in
+                guard !query.isEmpty else { return true }
+                return item.repo.name.localizedCaseInsensitiveContains(query) ||
+                    (item.repo.description ?? "").localizedCaseInsensitiveContains(query)
             }
-        }
-        switch filterMode {
-        case .cloned:
-            result = result.filter { $0.isClonedLocally }
-        case .notCloned:
-            result = result.filter { !$0.isClonedLocally }
-        case .all:
-            break
-        }
-        return result
-    }
-
-    private var localRepos: [RepoWithLocalState] {
-        filteredRepos
-            .filter(\.isClonedLocally)
+            .filter { item in
+                switch filterMode {
+                case .all:
+                    return true
+                case .cloned:
+                    return item.isClonedLocally
+                case .notCloned:
+                    return !item.isClonedLocally
+                }
+            }
             .sorted { lhs, rhs in
-                let lhsSize = workspaceSizes[lhs.repo.id] ?? -1
-                let rhsSize = workspaceSizes[rhs.repo.id] ?? -1
-                if lhsSize != rhsSize {
-                    return lhsSize > rhsSize
+                if lhs.isClonedLocally != rhs.isClonedLocally {
+                    return lhs.isClonedLocally
                 }
                 return lhs.repo.name.localizedCaseInsensitiveCompare(rhs.repo.name) == .orderedAscending
             }
     }
 
-    private var remoteRepos: [RepoWithLocalState] {
-        filteredRepos
-            .filter { !$0.isClonedLocally }
-            .sorted {
-                $0.repo.name.localizedCaseInsensitiveCompare($1.repo.name) == .orderedAscending
-            }
-    }
-
-    private var removalConfirmationMessage: String {
-        guard let item = pendingRemovalRepo,
-              let path = resolvedWorkspacePath(for: item) else {
-            return "raCommand will move this local workspace to Trash."
-        }
-        return "raCommand will update this local workspace to its newest upstream version, archive matching Codex threads, then move the folder to Trash:\n\(path)"
+    private var repoStats: String {
+        "\(repos.count) repos · \(repos.filter(\.isClonedLocally).count) local"
     }
 
     var body: some View {
-        NavigationSplitView {
-            // MARK: Sidebar
-            sidebarContent
-                .navigationTitle("Repos")
-                .platformNavigationTitleDisplayMode(.large)
-                .toolbar { toolbarContent }
-                .platformSearchable(text: $searchText, placement: .alwaysDrawer, prompt: "Search repos")
-        } detail: {
-            // MARK: Detail Panel
-            if let selected = selectedRepo {
-                let trackedProject = project(for: selected.repo)
-                let hasCodexThread = hasCodexThread(for: selected)
-                RepoDetailPanel(
-                    item: selected,
-                    cloneState: cloneStates[selected.repo.id] ?? .idle,
-                    cloneOutput: cloneOutput[selected.repo.id] ?? "",
-                    gitSnapshot: gitSnapshots[selected.repo.id],
-                    gitStatusError: gitStatusErrors[selected.repo.id],
-                    workspaceSize: workspaceSizes[selected.repo.id],
-                    gitActionState: gitActionStates[selected.repo.id] ?? .idle,
-                    pushDisabledReason: pushDisabledReason(for: selected),
-                    removalDisabledReason: removalDisabledReason(for: selected),
-                    workspacePath: resolvedWorkspacePath(for: selected),
-                    suggestedCommitMessage: gitSnapshots[selected.repo.id].map {
-                        LocalGitCommandService.suggestedCommitMessage(
-                            for: $0,
-                            repoName: selected.repo.name
-                        )
-                    },
-                    isTracked: isTracked(selected),
-                    hasActiveThread: trackedProject?.isActiveThread == true,
-                    hasCodexThread: hasCodexThread,
-	                    isOpeningInCodex: codexOpeningRepoID == selected.repo.id,
-	                    onClone: { await cloneRepo(selected) },
-	                    onTrack: { trackAsProject(selected) },
-	                    onOpenInCodex: { await openInCodex(selected) },
-	                    onPush: { requestPush(selected) },
-	                    onRemoveLocal: { requestLocalRemoval(selected) },
-	                    onRefreshGitStatus: { refreshGitSnapshot(for: selected) }
-	                )
-            } else {
-                emptyDetail
-            }
+        HStack(spacing: 0) {
+            repoListPane
+            repoDetailPane
         }
-        .whisperShell()
-        .quickIdeaToolbar()
+        .background(Color.clear)
         .alert("No GitHub Token", isPresented: $showTokenAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Save your GitHub token via Projects → Import → GitHub Import.")
         }
-	        .alert("Workspace Error", isPresented: Binding(
-	            get: { workspaceActionError != nil },
-	            set: { newValue in
-	                if !newValue { workspaceActionError = nil }
-	            }
+        .alert("Workspace Error", isPresented: Binding(
+            get: { workspaceActionError != nil },
+            set: { newValue in
+                if !newValue { workspaceActionError = nil }
+            }
         )) {
             Button("OK", role: .cancel) {}
-	        } message: {
-	            Text(workspaceActionError ?? "")
-	        }
+        } message: {
+            Text(workspaceActionError ?? "")
+        }
         .alert("Commit and Push", isPresented: Binding(
-	            get: { pendingPushRepo != nil },
-	            set: { newValue in
-	                if !newValue {
-	                    pendingPushRepo = nil
-	                    commitMessage = ""
-	                }
-	            }
-	        )) {
-	            TextField("Commit message", text: $commitMessage)
-	            Button("Commit & Push") {
-	                let item = pendingPushRepo
-	                let message = commitMessage
-	                pendingPushRepo = nil
-	                commitMessage = ""
-	                if let item {
-	                    Task { await pushRepo(item, commitMessage: message) }
-	                }
-	            }
-	            .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-	            Button("Cancel", role: .cancel) {
-	                pendingPushRepo = nil
-	                commitMessage = ""
-	            }
+            get: { pendingPushRepo != nil },
+            set: { newValue in
+                if !newValue {
+                    pendingPushRepo = nil
+                    commitMessage = ""
+                }
+            }
+        )) {
+            TextField("Commit message", text: $commitMessage)
+            Button("Commit & Push") {
+                let item = pendingPushRepo
+                let message = commitMessage
+                pendingPushRepo = nil
+                commitMessage = ""
+                if let item {
+                    Task { await pushRepo(item, commitMessage: message) }
+                }
+            }
+            .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) {
+                pendingPushRepo = nil
+                commitMessage = ""
+            }
         } message: {
             Text("This repo has local changes. Enter a commit message; raCommand will run git add -A, commit, then push.")
         }
@@ -243,248 +180,473 @@ struct RepoManagerView: View {
             Text("This repo has local changes. Enter a commit message; raCommand will commit, synchronize with upstream, archive matching Codex threads, then move the selected folder to Trash.")
         }
         .alert("Remove Local Copy?", isPresented: Binding(
-	            get: { pendingRemovalRepo != nil },
-	            set: { newValue in
-	                if !newValue { pendingRemovalRepo = nil }
-	            }
-	        )) {
-	            Button("Move to Trash", role: .destructive) {
+            get: { pendingRemovalRepo != nil },
+            set: { newValue in
+                if !newValue { pendingRemovalRepo = nil }
+            }
+        )) {
+            Button("Move to Trash", role: .destructive) {
                 let item = pendingRemovalRepo
                 pendingRemovalRepo = nil
                 if let item {
                     Task { await removeLocalCopy(item, commitMessage: nil) }
                 }
-	            }
-	            Button("Cancel", role: .cancel) {
-	                pendingRemovalRepo = nil
-	            }
-	        } message: {
-	            Text(removalConfirmationMessage)
-	        }
-	        .task {
-	            if repos.isEmpty { await loadRepos() }
-	        }
-	    }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingRemovalRepo = nil
+            }
+        } message: {
+            Text(removalConfirmationMessage)
+        }
+        .task {
+            if repos.isEmpty {
+                await loadRepos()
+            }
+        }
+    }
 
-    // MARK: - Sidebar Content
-    private var sidebarContent: some View {
-        Group {
-            if isLoading {
-                VStack(spacing: 14) {
-                    ProgressView()
-                        .tint(.secondary)
-                    Text("Fetching repos…")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if repos.isEmpty {
-                emptyState
-            } else {
-                List(selection: $selectedRepo) {
-                    if !localRepos.isEmpty {
-                        Section {
-                            ForEach(localRepos) { item in
-                                RepoSidebarRow(
-                                    item: item,
-                                    hasCodexThread: hasCodexThread(for: item),
-                                    isTracked: isTracked(item),
-                                    gitSnapshot: gitSnapshots[item.repo.id],
-                                    gitStatusError: gitStatusErrors[item.repo.id],
-                                    workspaceSize: workspaceSizes[item.repo.id],
-                                    isOpeningInCodex: codexOpeningRepoID == item.repo.id,
-                                    gitActionState: gitActionStates[item.repo.id] ?? .idle,
-                                    onOpenInCodex: { Task { await openInCodex(item) } },
-                                    pushDisabledReason: pushDisabledReason(for: item),
-                                    removalDisabledReason: removalDisabledReason(for: item),
-                                    onPush: { requestPush(item) },
-                                    onRemoveLocal: { requestLocalRemoval(item) }
-                                )
-                                .tag(item)
-                            }
-                        } header: {
-                            sectionHeader(title: "Local", count: localRepos.count, color: .green)
-                        }
+    private var repoListPane: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Repos")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(Color(red: 0.941, green: 0.949, blue: 0.961))
+                        Text(repoStats)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
                     }
 
-                    if !remoteRepos.isEmpty {
-                        Section {
-                            ForEach(remoteRepos) { item in
-                                RepoSidebarRow(
-                                    item: item,
-                                    hasCodexThread: hasCodexThread(for: item),
-                                    isTracked: isTracked(item),
-                                    gitSnapshot: nil,
-                                    gitStatusError: nil,
-                                    workspaceSize: nil,
-                                    isOpeningInCodex: false,
-                                    gitActionState: .idle,
-                                    onOpenInCodex: nil,
-                                    pushDisabledReason: nil,
-                                    removalDisabledReason: nil,
-                                    onPush: nil,
-                                    onRemoveLocal: nil
-                                )
-                                .tag(item)
-                            }
-                        } header: {
-                            sectionHeader(title: "Remote Only", count: remoteRepos.count, color: .orange)
-                        }
+                    Spacer(minLength: 12)
+
+                    Button {
+                        Task { await loadRepos() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isLoading)
+                }
+
+                repoSearchField
+
+                HStack(spacing: 6) {
+                    ForEach(FilterMode.allCases, id: \.self) { mode in
+                        repoFilterChip(for: mode)
                     }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-                .safeAreaInset(edge: .top) {
-                    statsBar
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
+            }
+            .padding(.top, 20)
+            .padding(.horizontal, 18)
+            .padding(.bottom, 14)
+
+            Group {
+                if isLoading && repos.isEmpty {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .tint(WhisperTheme.mutedInk)
+                        Text("Fetching repos…")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if filteredRepos.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(repos.isEmpty ? "No repos loaded" : "No repos match this filter")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(WhisperTheme.ink)
+                        Text(repos.isEmpty ? "Connect GitHub import to populate this list." : "Try another search or switch the Local/Remote filter.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(WhisperTheme.mutedInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 10)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 2) {
+                            ForEach(filteredRepos) { item in
+                                RepoListRow(
+                                    item: item,
+                                    isSelected: selectedRepo?.id == item.id,
+                                    statusLabel: repoRowStatus(item),
+                                    secondaryLabel: repoRowSecondary(item)
+                                ) {
+                                    selectedRepo = item
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 12)
+                    }
                 }
             }
         }
-    }
-
-    private func sectionHeader(title: String, count: Int, color: Color) -> some View {
-        HStack {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(WhisperTheme.mutedInk)
-            Spacer()
-            Text("\(count)")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(color)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(color.opacity(0.12), in: Capsule())
+        .frame(width: 340)
+        .background(Color.clear)
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(width: 1)
         }
-        .textCase(nil)
     }
 
-    // MARK: - Stats Bar
-    private var statsBar: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                statChip(value: repos.count, label: "Total", color: .blue)
-                statChip(value: repos.filter { $0.isClonedLocally }.count, label: "Local", color: .green)
-                statChip(value: repos.filter { !$0.isClonedLocally }.count, label: "Remote", color: .orange)
-            }
-
-            Picker("Repo filter", selection: $filterMode) {
-                ForEach(FilterMode.allCases, id: \.self) { mode in
-                    Text(mode.rawValue).tag(mode)
+    private var repoDetailPane: some View {
+        ScrollView {
+            Group {
+                if let selectedRepo {
+                    RepoWorkbenchView(
+                        item: selectedRepo,
+                        description: selectedRepo.repo.description,
+                        statusText: repoStatusBadgeText(for: selectedRepo),
+                        statusColor: repoStatusColor(for: selectedRepo),
+                        statusBackground: repoStatusBackground(for: selectedRepo),
+                        branchValue: repoBranchValue(for: selectedRepo),
+                        sizeValue: repoSizeValue(for: selectedRepo),
+                        lastSyncValue: repoLastSyncValue(for: selectedRepo),
+                        details: detailRows(for: selectedRepo),
+                        cloneOutput: cloneOutput[selectedRepo.repo.id] ?? "",
+                        gitActionOutput: gitActionOutput(for: selectedRepo),
+                        cloneButton: cloneButtonConfiguration(for: selectedRepo),
+                        codexButton: codexButtonConfiguration(for: selectedRepo),
+                        pushButton: pushButtonConfiguration(for: selectedRepo),
+                        removeButton: removeButtonConfiguration(for: selectedRepo),
+                        onClone: { Task { await cloneRepo(selectedRepo) } },
+                        onOpenCodex: { Task { await openInCodex(selectedRepo) } },
+                        onPush: { requestPush(selectedRepo) },
+                        onRemove: { requestLocalRemoval(selectedRepo) },
+                        onOpenGitHub: {
+                            if let url = URL(string: selectedRepo.repo.htmlURL) {
+                                PlatformSystemServices.open(url)
+                            }
+                        },
+                        onTrackOnly: {
+                            if !isTracked(selectedRepo) {
+                                trackAsProject(selectedRepo)
+                            }
+                        }
+                    )
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Select a repo")
+                            .font(.system(size: 19, weight: .bold))
+                            .foregroundStyle(Color(red: 0.941, green: 0.949, blue: 0.961))
+                        Text("Use the left pane to inspect local mirrors, open a Codex workspace, or push and remove safely.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(32)
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .whisperPanel(padding: 10, radius: 10)
     }
 
-    private func statChip(value: Int, label: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Text("\(value)")
-                .font(.subheadline.bold())
-                .foregroundStyle(color)
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private var repoSearchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color(red: 0.361, green: 0.380, blue: 0.416))
+
+            TextField("Search repos…", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(WhisperTheme.ink)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(color.opacity(0.1), in: Capsule())
-        .frame(maxWidth: .infinity)
+        .frame(height: 32)
+        .background(Color(red: 0.075, green: 0.078, blue: 0.090), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        )
     }
 
-    // MARK: - Toolbar
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .platformNavigationLeading) {
-            Menu {
-                ForEach(FilterMode.allCases, id: \.self) { mode in
-                    Button {
-                        filterMode = mode
-                    } label: {
-                        if filterMode == mode {
-                            Label(mode.rawValue, systemImage: "checkmark")
-                        } else {
-                            Text(mode.rawValue)
-                        }
-                    }
+    private func repoFilterChip(for mode: FilterMode) -> some View {
+        let isSelected = filterMode == mode
+
+        return Button {
+            filterMode = mode
+        } label: {
+            Text(mode.rawValue)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(isSelected ? Color(red: 0.498, green: 0.690, blue: 1.000) : Color(red: 0.541, green: 0.561, blue: 0.596))
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isSelected ? WhisperTheme.accent.opacity(0.12) : .clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(isSelected ? WhisperTheme.accent.opacity(0.40) : Color.white.opacity(0.08), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var removalConfirmationMessage: String {
+        guard let item = pendingRemovalRepo,
+              let path = resolvedWorkspacePath(for: item) else {
+            return "raCommand will move this local workspace to Trash."
+        }
+        return "raCommand will update this local workspace to its newest upstream version, archive matching Codex threads, then move the folder to Trash:\n\(path)"
+    }
+
+    private func repoRowStatus(_ item: RepoWithLocalState) -> String {
+        if let gitAction = compactGitActionLabel(for: item) {
+            return gitAction
+        }
+        if item.isClonedLocally {
+            if let snapshot = gitSnapshots[item.repo.id] {
+                if snapshot.changedFileCount > 0 {
+                    return "Dirty"
                 }
-            } label: {
-                Image(systemName: "line.3.horizontal.decrease.circle")
+                if let ahead = snapshot.aheadCount, ahead > 0 {
+                    return "Ahead \(ahead)"
+                }
+                if let behind = snapshot.behindCount, behind > 0 {
+                    return "Behind \(behind)"
+                }
             }
+            return "Local"
         }
-        ToolbarItem(placement: .platformNavigationTrailing) {
-            Button {
-                Task { await loadRepos() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .disabled(isLoading)
+        return "Remote"
+    }
+
+    private func repoRowSecondary(_ item: RepoWithLocalState) -> String {
+        if item.isClonedLocally, let workspaceSize = workspaceSizes[item.repo.id] {
+            return ByteCountFormatter.string(fromByteCount: workspaceSize, countStyle: .file)
+        }
+        if let snapshot = gitSnapshots[item.repo.id], !snapshot.branch.isEmpty {
+            return snapshot.branch
+        }
+        return item.repo.description?.isEmpty == false ? item.repo.description! : "GitHub"
+    }
+
+    private func repoStatusBadgeText(for item: RepoWithLocalState) -> String {
+        if let snapshot = gitSnapshots[item.repo.id], snapshot.changedFileCount > 0 {
+            return "Pending"
+        }
+        if let gitStatusErrors = gitStatusErrors[item.repo.id], !gitStatusErrors.isEmpty {
+            return "Needs Attention"
+        }
+        return item.isClonedLocally ? "Synced" : "Remote"
+    }
+
+    private func repoStatusColor(for item: RepoWithLocalState) -> Color {
+        if let snapshot = gitSnapshots[item.repo.id], snapshot.changedFileCount > 0 {
+            return WhisperTheme.warning
+        }
+        if let gitStatusErrors = gitStatusErrors[item.repo.id], !gitStatusErrors.isEmpty {
+            return WhisperTheme.danger
+        }
+        return item.isClonedLocally ? WhisperTheme.success : WhisperTheme.info
+    }
+
+    private func repoStatusBackground(for item: RepoWithLocalState) -> Color {
+        repoStatusColor(for: item).opacity(0.14)
+    }
+
+    private func repoBranchValue(for item: RepoWithLocalState) -> String {
+        gitSnapshots[item.repo.id]?.branch ?? (item.isClonedLocally ? "local" : "remote")
+    }
+
+    private func repoSizeValue(for item: RepoWithLocalState) -> String {
+        guard let workspaceSize = workspaceSizes[item.repo.id] else { return item.isClonedLocally ? "Unknown" : "Not cloned" }
+        return ByteCountFormatter.string(fromByteCount: workspaceSize, countStyle: .file)
+    }
+
+    private func repoLastSyncValue(for item: RepoWithLocalState) -> String {
+        guard let commit = gitSnapshots[item.repo.id]?.recentCommits.first else {
+            return item.isClonedLocally ? "Local" : "GitHub"
+        }
+        return commit.relativeDate
+    }
+
+    private func compactGitActionLabel(for item: RepoWithLocalState) -> String? {
+        switch gitActionStates[item.repo.id] ?? .idle {
+        case .running(.push):
+            return "Pushing"
+        case .running(.removeLocal):
+            return "Removing"
+        case .success(.push, _):
+            return "Pushed"
+        case .success(.removeLocal, _):
+            return "Removed"
+        case .failed(.push, _), .failed(.removeLocal, _):
+            return "Error"
+        case .idle:
+            return nil
         }
     }
 
-    // MARK: - Empty States
-    private var emptyState: some View {
-        VStack(spacing: 16) {
-            WhisperEmptyState(
-                icon: "externaldrive.badge.questionmark",
-                title: "No repos loaded",
-                message: "Fetch from GitHub to populate the repo board and local clone status."
+    private func detailRows(for item: RepoWithLocalState) -> [(String, String)] {
+        var rows: [(String, String)] = []
+
+        if let path = resolvedWorkspacePath(for: item), !path.isEmpty {
+            rows.append(("Workspace", path))
+        }
+
+        if let origin = gitSnapshots[item.repo.id]?.originURL, !origin.isEmpty {
+            rows.append(("Origin", origin))
+        }
+
+        if let snapshot = gitSnapshots[item.repo.id] {
+            rows.append(("Changes", "\(snapshot.changedFileCount) files"))
+            rows.append(("Staged", "\(snapshot.stagedCount)"))
+            rows.append(("Unstaged", "\(snapshot.unstagedCount)"))
+            rows.append(("Untracked", "\(snapshot.untrackedCount)"))
+
+            if let ahead = snapshot.aheadCount {
+                rows.append(("Ahead", "\(ahead)"))
+            }
+
+            if let behind = snapshot.behindCount {
+                rows.append(("Behind", "\(behind)"))
+            }
+
+            if let commit = snapshot.recentCommits.first {
+                rows.append(("Latest", "\(commit.shortSHA) \(commit.message)"))
+            }
+        } else if let error = gitStatusErrors[item.repo.id], !error.isEmpty {
+            rows.append(("Git", error))
+        }
+
+        if hasCodexThread(for: item) {
+            rows.append(("Codex", "Existing thread detected"))
+        } else if project(for: item.repo)?.isActiveThread == true {
+            rows.append(("Codex", "Marked as active thread"))
+        }
+
+        if isTracked(item) {
+            rows.append(("Projects", "Tracked in raCommand"))
+        }
+
+        return rows
+    }
+
+    private func cloneButtonConfiguration(for item: RepoWithLocalState) -> RepoActionButtonConfiguration {
+        let cloneState = cloneStates[item.repo.id] ?? .idle
+        switch cloneState {
+        case .idle:
+            return RepoActionButtonConfiguration(
+                title: item.isClonedLocally ? "Local Ready" : "Clone",
+                tone: .secondary,
+                disabled: item.isClonedLocally
             )
-            Button("Refresh") {
-                Task { await loadRepos() }
-            }
-            .buttonStyle(.bordered)
+        case .cloning:
+            return RepoActionButtonConfiguration(title: "Cloning…", tone: .secondary, disabled: true)
+        case .success:
+            return RepoActionButtonConfiguration(title: "Cloned", tone: .secondary, disabled: true)
+        case .failed:
+            return RepoActionButtonConfiguration(title: "Retry Clone", tone: .secondary, disabled: false)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var emptyDetail: some View {
-        VStack(spacing: 12) {
-            WhisperEmptyState(
-                icon: "sidebar.right",
-                title: "Select a repo",
-                message: "Use the left rail to inspect remote repos, local clones, and project tracking actions."
-            )
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private func codexButtonConfiguration(for item: RepoWithLocalState) -> RepoActionButtonConfiguration {
+        RepoActionButtonConfiguration(
+            title: codexOpeningRepoID == item.repo.id ? "Opening…" : "Open in Codex",
+            tone: .primary,
+            disabled: codexOpeningRepoID == item.repo.id
+        )
     }
 
-    // MARK: - Load Repos
+    private func pushButtonConfiguration(for item: RepoWithLocalState) -> RepoActionButtonConfiguration {
+        RepoActionButtonConfiguration(
+            title: pushButtonTitle(for: item),
+            tone: .secondary,
+            disabled: pushDisabledReason(for: item) != nil || gitActionStates[item.repo.id]?.isRunning == true
+        )
+    }
+
+    private func removeButtonConfiguration(for item: RepoWithLocalState) -> RepoActionButtonConfiguration {
+        RepoActionButtonConfiguration(
+            title: removeButtonTitle(for: item),
+            tone: .danger,
+            disabled: removalDisabledReason(for: item) != nil || gitActionStates[item.repo.id]?.isRunning == true
+        )
+    }
+
+    private func pushButtonTitle(for item: RepoWithLocalState) -> String {
+        switch gitActionStates[item.repo.id] ?? .idle {
+        case .running(.push):
+            return "Pushing…"
+        case .success(.push, _):
+            return "Pushed"
+        case .failed(.push, _):
+            return "Retry Push"
+        default:
+            return "Push"
+        }
+    }
+
+    private func removeButtonTitle(for item: RepoWithLocalState) -> String {
+        switch gitActionStates[item.repo.id] ?? .idle {
+        case .running(.removeLocal):
+            return "Removing…"
+        case .success(.removeLocal, _):
+            return "Removed"
+        case .failed(.removeLocal, _):
+            return "Retry Remove"
+        default:
+            return "Remove"
+        }
+    }
+
+    private func gitActionOutput(for item: RepoWithLocalState) -> String {
+        switch gitActionStates[item.repo.id] ?? .idle {
+        case .success(_, let output), .failed(_, let output):
+            return output
+        case .idle, .running:
+            return ""
+        }
+    }
+
     private func loadRepos() async {
         guard let token = KeychainService.loadGitHubToken(), !token.isEmpty else {
             showTokenAlert = true
             return
         }
+
         isLoading = true
+        defer { isLoading = false }
+
         do {
             let fetched = try await GitHubService.fetchRepos(token: token)
             let activeCodexPaths = LocalWorkspaceService.activeCodexWorkspacePaths(rootPathPrefix: localDevPath)
-            repos = fetched
+            let nextRepos = fetched
                 .map { repo in
-                    RepoWithLocalState(
-                        repo: repo,
-                        localPath: detectedLocalWorkspacePath(for: repo)
-                    )
+                    RepoWithLocalState(repo: repo, localPath: detectedLocalWorkspacePath(for: repo))
                 }
-                .sorted { a, b in
-                    if a.isClonedLocally != b.isClonedLocally {
-                        return a.isClonedLocally
+                .sorted { lhs, rhs in
+                    if lhs.isClonedLocally != rhs.isClonedLocally {
+                        return lhs.isClonedLocally
                     }
-                    return a.repo.name.localizedCaseInsensitiveCompare(b.repo.name) == .orderedAscending
+                    return lhs.repo.name.localizedCaseInsensitiveCompare(rhs.repo.name) == .orderedAscending
                 }
+
+            repos = nextRepos
             codexWorkspacePaths = activeCodexPaths
-            if let sel = selectedRepo, let updated = repos.first(where: { $0.id == sel.id }) {
+
+            if let current = selectedRepo,
+               let updated = nextRepos.first(where: { $0.id == current.id }) {
                 selectedRepo = updated
+            } else {
+                selectedRepo = nextRepos.first
             }
+
             refreshGitSnapshots()
         } catch {
-            // silently fail — alert already shown for token issues
+            workspaceActionError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
-        isLoading = false
     }
 
     private func detectedLocalWorkspacePath(for repo: GitHubRepo) -> String? {
@@ -510,15 +672,12 @@ struct RepoManagerView: View {
         return normalizedSuggestedPath
     }
 
-    // MARK: - In-app clone via Process (macOS)
     private func cloneRepo(_ item: RepoWithLocalState) async {
         cloneStates[item.repo.id] = .cloning
         cloneOutput[item.repo.id] = ""
 
-        let dest = "\(localDevPath)/\(item.repo.name)"
-
-        // Check already exists
-        if FileManager.default.fileExists(atPath: dest) {
+        let destination = "\(localDevPath)/\(item.repo.name)"
+        if FileManager.default.fileExists(atPath: destination) {
             cloneStates[item.repo.id] = .success
             cloneOutput[item.repo.id] = "Already exists at local dev."
             await loadRepos()
@@ -528,19 +687,19 @@ struct RepoManagerView: View {
         #if os(macOS)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["clone", item.repo.htmlURL, dest]
+        process.arguments = ["clone", item.repo.htmlURL, destination]
 
-        let pipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = errorPipe
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
 
         do {
             try process.run()
             process.waitUntilExit()
 
-            let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
+            let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: outputData, encoding: .utf8) ?? ""
             let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
             let combined = [output, errorOutput].filter { !$0.isEmpty }.joined(separator: "\n")
@@ -549,7 +708,7 @@ struct RepoManagerView: View {
                 cloneOutput[item.repo.id] = combined.isEmpty ? "Clone complete." : combined
                 if process.terminationStatus == 0 {
                     cloneStates[item.repo.id] = .success
-                    attachLocalWorkspace(dest, to: item.repo)
+                    attachLocalWorkspace(destination, to: item.repo)
                 } else {
                     cloneStates[item.repo.id] = .failed("git exited with code \(process.terminationStatus)")
                 }
@@ -564,12 +723,11 @@ struct RepoManagerView: View {
         #else
         await MainActor.run {
             cloneStates[item.repo.id] = .failed("In-app cloning is only supported on macOS.")
-            cloneOutput[item.repo.id] = "Run `git clone \(item.repo.htmlURL) \\\"\(dest)\\\"` from Terminal instead."
+            cloneOutput[item.repo.id] = "Run `git clone \(item.repo.htmlURL) \\\"\(destination)\\\"` from Terminal instead."
         }
         #endif
     }
 
-    // MARK: - Track as project
     private func trackAsProject(_ item: RepoWithLocalState) {
         let wasAlreadyTracked = project(for: item.repo) != nil
         let project = ensureProject(for: item, workspacePath: resolvedWorkspacePath(for: item))
@@ -591,8 +749,8 @@ struct RepoManagerView: View {
         project.lastUpdated = Date()
     }
 
-	    private func openInCodex(_ item: RepoWithLocalState) async {
-	        guard codexOpeningRepoID != item.repo.id else { return }
+    private func openInCodex(_ item: RepoWithLocalState) async {
+        guard codexOpeningRepoID != item.repo.id else { return }
 
         codexOpeningRepoID = item.repo.id
         workspaceActionError = nil
@@ -623,7 +781,6 @@ struct RepoManagerView: View {
             trackedRepoIDs.insert(item.repo.id)
 
             try context.save()
-
             try LocalWorkspaceService.openInCodex(path: workspacePath)
 
             cloneStates[item.repo.id] = .success
@@ -636,8 +793,8 @@ struct RepoManagerView: View {
                 cloneStates[item.repo.id] = .failed(message)
                 cloneOutput[item.repo.id] = message
             }
-	        }
-	    }
+        }
+    }
 
     private func requestPush(_ item: RepoWithLocalState) {
         if let reason = pushDisabledReason(for: item) {
@@ -828,9 +985,9 @@ struct RepoManagerView: View {
         }
     }
 
-	    private func project(for repo: GitHubRepo) -> Project? {
-	        projects.first(where: { $0.repoURL == repo.htmlURL })
-	    }
+    private func project(for repo: GitHubRepo) -> Project? {
+        projects.first(where: { $0.repoURL == repo.htmlURL })
+    }
 
     private func isTracked(_ item: RepoWithLocalState) -> Bool {
         project(for: item.repo) != nil || trackedRepoIDs.contains(item.repo.id)
@@ -893,852 +1050,293 @@ struct RepoManagerView: View {
     }
 }
 
-// MARK: - Sidebar Row
-struct RepoSidebarRow: View {
+private struct RepoListRow: View {
     let item: RepoWithLocalState
-    let hasCodexThread: Bool
-    let isTracked: Bool
-    let gitSnapshot: LocalGitSnapshot?
-    let gitStatusError: String?
-    let workspaceSize: Int64?
-    let isOpeningInCodex: Bool
-    let gitActionState: GitActionState
-    let onOpenInCodex: (() -> Void)?
-    let pushDisabledReason: String?
-    let removalDisabledReason: String?
-    let onPush: (() -> Void)?
-    let onRemoveLocal: (() -> Void)?
+    let isSelected: Bool
+    let statusLabel: String
+    let secondaryLabel: String
+    let onSelect: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: item.isClonedLocally ? "checkmark.circle.fill" : "arrow.down.circle")
-                .foregroundStyle(item.isClonedLocally ? .green : .orange)
-                .font(.system(size: 18))
-                .frame(width: 24)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.repo.name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(WhisperTheme.ink)
-                    .lineLimit(2)
-                    .layoutPriority(1)
-
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(subtitleColor)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 6) {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    if item.isClonedLocally {
-                        quickActionButton(
-                            icon: isOpeningInCodex ? "rectangle.stack.badge.play.fill" : "rectangle.stack.badge.play",
-                            color: .blue,
-                            help: hasCodexThread ? "Open the existing Codex thread" : "Open this local repo in Codex",
-                            isDisabled: isOpeningInCodex,
-                            action: onOpenInCodex
-                        )
+                    Circle()
+                        .fill(item.isClonedLocally ? WhisperTheme.success : WhisperTheme.info)
+                        .frame(width: 6, height: 6)
 
-                        quickActionButton(
-                            icon: pushQuickActionIcon,
-                            color: pushDisabledReason == nil ? .blue : .secondary,
-                            help: pushDisabledReason ?? pushQuickActionHelp,
-                            isDisabled: pushDisabledReason != nil || gitActionState.isRunning,
-                            action: onPush
-                        )
+                    Text(item.repo.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(WhisperTheme.ink)
+                        .lineLimit(1)
 
-                        quickActionButton(
-                            icon: removeQuickActionIcon,
-                            color: removalDisabledReason == nil ? .red : .secondary,
-                            help: removalDisabledReason ?? removeQuickActionHelp,
-                            isDisabled: removalDisabledReason != nil || gitActionState.isRunning,
-                            action: onRemoveLocal
-                        )
-                    }
-
-                    if hasCodexThread {
-                        Image(systemName: "rectangle.stack.badge.checkmark")
-                            .foregroundStyle(WhisperTheme.info)
-                    } else if isTracked {
-                        Image(systemName: "folder.badge.plus")
-                            .foregroundStyle(WhisperTheme.success)
-                    }
-
-                    Text(item.isClonedLocally ? "Local" : "Remote")
-                        .font(.caption2.bold())
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(
-                            (item.isClonedLocally ? Color.green : Color.orange).opacity(0.15),
-                            in: Capsule()
-                        )
-                        .foregroundStyle(item.isClonedLocally ? .green : .orange)
+                    Spacer(minLength: 0)
                 }
 
-                if let workspaceSizeLabel {
-                    Text(workspaceSizeLabel)
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Text(statusLabel.uppercased())
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(red: 0.361, green: 0.380, blue: 0.416))
+                    Circle()
+                        .fill(Color(red: 0.247, green: 0.263, blue: 0.290))
+                        .frame(width: 2, height: 2)
+                    Text(secondaryLabel)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(red: 0.361, green: 0.380, blue: 0.416))
+                        .lineLimit(1)
                 }
+                .padding(.leading, 14)
             }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? WhisperTheme.accent.opacity(0.08) : Color(red: 0.075, green: 0.078, blue: 0.090))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(isSelected ? WhisperTheme.accent.opacity(0.35) : Color.white.opacity(0.05), lineWidth: 1)
+            )
         }
-        .padding(14)
-        .background(WhisperTheme.panel.opacity(0.88), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(WhisperTheme.border, lineWidth: 1)
-        )
-        .padding(.vertical, 4)
+        .buttonStyle(.plain)
+    }
+}
+
+private struct RepoActionButtonConfiguration {
+    enum Tone {
+        case primary
+        case secondary
+        case danger
     }
 
-    private var subtitle: String {
-        var fragments: [String] = []
+    let title: String
+    let tone: Tone
+    let disabled: Bool
+}
 
-        if hasCodexThread {
-            fragments.append("Codex thread")
-        } else if isTracked {
-            fragments.append("Tracked")
-        }
+private struct RepoWorkbenchView: View {
+    let item: RepoWithLocalState
+    let description: String?
+    let statusText: String
+    let statusColor: Color
+    let statusBackground: Color
+    let branchValue: String
+    let sizeValue: String
+    let lastSyncValue: String
+    let details: [(String, String)]
+    let cloneOutput: String
+    let gitActionOutput: String
+    let cloneButton: RepoActionButtonConfiguration
+    let codexButton: RepoActionButtonConfiguration
+    let pushButton: RepoActionButtonConfiguration
+    let removeButton: RepoActionButtonConfiguration
+    let onClone: () -> Void
+    let onOpenCodex: () -> Void
+    let onPush: () -> Void
+    let onRemove: () -> Void
+    let onOpenGitHub: () -> Void
+    let onTrackOnly: () -> Void
 
-        if item.isClonedLocally {
-            if let gitStatusError, !gitStatusError.isEmpty {
-                fragments.append("Git status unavailable")
-            } else if let gitSnapshot {
-                if gitSnapshot.changedFileCount > 0 {
-                    fragments.append("\(gitSnapshot.changedFileCount) changed")
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(item.repo.name)
+                        .font(.system(size: 19, weight: .bold))
+                        .foregroundStyle(Color(red: 0.941, green: 0.949, blue: 0.961))
+
+                    Text(item.repo.htmlURL)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(red: 0.361, green: 0.380, blue: 0.416))
+                        .textSelection(.enabled)
+
+                    if let description, !description.isEmpty {
+                        Text(description)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                if let ahead = gitSnapshot.aheadCount, ahead > 0 {
-                    fragments.append("\(ahead) ahead")
+
+                Spacer(minLength: 0)
+
+                Text(statusText)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(statusColor)
+                    .padding(.horizontal, 9)
+                    .frame(height: 22)
+                    .background(statusBackground, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+
+            HStack(spacing: 10) {
+                RepoStatCard(label: "BRANCH", value: branchValue)
+                RepoStatCard(label: "SIZE", value: sizeValue)
+                RepoStatCard(label: "LAST SYNC", value: lastSyncValue)
+            }
+
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(height: 1)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("ACTIONS")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
+
+                HStack(spacing: 8) {
+                    repoActionButton(codexButton, action: onOpenCodex)
+                    repoActionButton(pushButton, action: onPush)
+                    repoActionButton(removeButton, action: onRemove)
                 }
-                if let behind = gitSnapshot.behindCount, behind > 0 {
-                    fragments.append("\(behind) behind")
-                }
-                if fragments.isEmpty {
-                    fragments.append("Clean")
-                }
-                if let commit = gitSnapshot.recentCommits.first {
-                    fragments.append("\(commit.shortSHA) \(commit.message)")
+
+                HStack(spacing: 8) {
+                    repoActionButton(cloneButton, action: onClone)
+                    repoActionButton(
+                        RepoActionButtonConfiguration(title: "GitHub", tone: .secondary, disabled: false),
+                        action: onOpenGitHub
+                    )
+                    repoActionButton(
+                        RepoActionButtonConfiguration(title: "Track Only", tone: .secondary, disabled: false),
+                        action: onTrackOnly
+                    )
                 }
             }
-        }
 
-        if fragments.isEmpty, let desc = item.repo.description, !desc.isEmpty {
-            fragments.append(desc)
-        }
+            if !details.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("DETAILS")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
 
-        return fragments.isEmpty ? item.repo.htmlURL : fragments.joined(separator: " • ")
+                    ForEach(Array(details.enumerated()), id: \.offset) { _, detail in
+                        HStack(alignment: .top, spacing: 14) {
+                            Text(detail.0.uppercased())
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(Color(red: 0.361, green: 0.380, blue: 0.416))
+                                .frame(width: 70, alignment: .leading)
+
+                            Text(detail.1)
+                                .font(.system(size: 12))
+                                .foregroundStyle(WhisperTheme.ink)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+            }
+
+            if !cloneOutput.isEmpty {
+                RepoOutputPanel(title: "CLONE OUTPUT", text: cloneOutput)
+            }
+
+            if !gitActionOutput.isEmpty {
+                RepoOutputPanel(title: "GIT ACTION", text: gitActionOutput)
+            }
+        }
+        .padding(32)
+        .frame(maxWidth: 640, alignment: .leading)
     }
 
-    private var subtitleColor: Color {
-        if item.isClonedLocally, gitStatusError != nil {
+    private func repoActionButton(_ configuration: RepoActionButtonConfiguration, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(configuration.title)
+                .font(.system(size: 13, weight: configuration.tone == .primary ? .semibold : .medium))
+                .foregroundStyle(foregroundColor(for: configuration))
+                .frame(maxWidth: configuration.tone == .danger ? nil : .infinity)
+                .frame(height: 34)
+                .padding(.horizontal, configuration.tone == .danger ? 14 : 12)
+                .background(background(for: configuration), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(border(for: configuration), lineWidth: configuration.tone == .primary ? 0 : 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(configuration.disabled)
+        .opacity(configuration.disabled ? 0.55 : 1)
+    }
+
+    private func foregroundColor(for configuration: RepoActionButtonConfiguration) -> Color {
+        switch configuration.tone {
+        case .primary:
+            return .white
+        case .secondary:
+            return WhisperTheme.ink
+        case .danger:
             return WhisperTheme.danger
         }
-        if item.isClonedLocally, let gitSnapshot, gitSnapshot.changedFileCount > 0 {
-            return WhisperTheme.warning
-        }
-        if hasCodexThread {
-            return WhisperTheme.info
-        }
-        if isTracked {
-            return WhisperTheme.success
-        }
-        return WhisperTheme.mutedInk
     }
 
-    private var workspaceSizeLabel: String? {
-        guard item.isClonedLocally, let workspaceSize else { return nil }
-        return ByteCountFormatter.string(fromByteCount: workspaceSize, countStyle: .file)
-    }
-
-    private var pushQuickActionIcon: String {
-        switch gitActionState {
-        case .running(.push):
-            return "arrow.up.circle.fill"
-        case .success(.push, _):
-            return "checkmark.circle.fill"
-        case .failed(.push, _):
-            return "exclamationmark.triangle.fill"
-        case .idle, .running(.removeLocal), .success(.removeLocal, _), .failed(.removeLocal, _):
-            return "arrow.up.circle"
+    private func background(for configuration: RepoActionButtonConfiguration) -> Color {
+        switch configuration.tone {
+        case .primary:
+            return WhisperTheme.accent
+        case .secondary:
+            return Color.white.opacity(0.04)
+        case .danger:
+            return WhisperTheme.danger.opacity(0.06)
         }
     }
 
-    private var removeQuickActionIcon: String {
-        switch gitActionState {
-        case .running(.removeLocal):
-            return "trash.circle.fill"
-        case .success(.removeLocal, _):
-            return "checkmark.circle.fill"
-        case .failed(.removeLocal, _):
-            return "exclamationmark.triangle.fill"
-        case .idle, .running(.push), .success(.push, _), .failed(.push, _):
-            return "trash.circle"
-        }
-    }
-
-    private var pushQuickActionHelp: String {
-        if let gitSnapshot, gitSnapshot.isDirty {
-            return "Commit and push local changes"
-        }
-        return "Push this local repo"
-    }
-
-    private var removeQuickActionHelp: String {
-        "Push if needed, archive matching Codex threads, then remove the local copy"
-    }
-
-    @ViewBuilder
-    private func quickActionButton(
-        icon: String,
-        color: Color,
-        help: String,
-        isDisabled: Bool,
-        action: (() -> Void)?
-    ) -> some View {
-        if let action {
-            Button(action: action) {
-                Image(systemName: icon)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(color)
-                    .frame(width: 28, height: 28)
-                    .background(color.opacity(0.12), in: Circle())
-            }
-            .buttonStyle(.plain)
-            .help(help)
-            .disabled(isDisabled)
-            .opacity(isDisabled ? 0.55 : 1)
+    private func border(for configuration: RepoActionButtonConfiguration) -> Color {
+        switch configuration.tone {
+        case .primary:
+            return .clear
+        case .secondary:
+            return Color.white.opacity(0.12)
+        case .danger:
+            return WhisperTheme.danger.opacity(0.25)
         }
     }
 }
 
-// MARK: - Detail Panel
-struct RepoDetailPanel: View {
-    let item: RepoWithLocalState
-    let cloneState: CloneState
-    let cloneOutput: String
-    let gitSnapshot: LocalGitSnapshot?
-    let gitStatusError: String?
-    let workspaceSize: Int64?
-    let gitActionState: GitActionState
-    let pushDisabledReason: String?
-    let removalDisabledReason: String?
-    let workspacePath: String?
-    let suggestedCommitMessage: String?
-    let isTracked: Bool
-    let hasActiveThread: Bool
-    let hasCodexThread: Bool
-    let isOpeningInCodex: Bool
-    let onClone: () async -> Void
-    let onTrack: () -> Void
-    let onOpenInCodex: () async -> Void
-    let onPush: () -> Void
-    let onRemoveLocal: () -> Void
-    let onRefreshGitStatus: () -> Void
+private struct RepoStatCard: View {
+    let label: String
+    let value: String
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                // Header
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .top) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.repo.name)
-                                .font(.title2.bold())
-                                .foregroundStyle(WhisperTheme.ink)
-                            if let desc = item.repo.description, !desc.isEmpty {
-                                Text(desc)
-                                    .font(.subheadline)
-                                    .foregroundStyle(WhisperTheme.mutedInk)
-                            }
-                        }
-                        Spacer()
-                        statusBadges
-                    }
-	                }
-	                .whisperPanel()
-	                .padding()
-
-                if item.isClonedLocally {
-                    gitStatusPanel
-                        .padding(.horizontal)
-                        .padding(.bottom, 12)
-
-                    if hasWorkspaceSummary {
-                        workspaceSummaryPanel
-                            .padding(.horizontal)
-                            .padding(.bottom, 12)
-                    }
-
-                    if hasRecentCommits {
-                        recentCommitsPanel
-                            .padding(.horizontal)
-                            .padding(.bottom, 12)
-                    }
-                }
-
-	                // Action buttons
-	                VStack(spacing: 0) {
-	                    codexActionRow
-
-                    Divider().padding(.leading, 52)
-
-                    actionRow(
-                        icon: "safari",
-                        label: "Open on GitHub",
-                        color: .blue
-                    ) {
-                        if let url = URL(string: item.repo.htmlURL) {
-                            PlatformSystemServices.open(url)
-                        }
-                    }
-
-                    Divider().padding(.leading, 52)
-
-	                    if !item.isClonedLocally {
-	                        cloneActionRow
-	                        Divider().padding(.leading, 52)
-	                    }
-
-                    if item.isClonedLocally {
-                        pushActionRow
-                        Divider().padding(.leading, 52)
-
-                        removeLocalActionRow
-                        Divider().padding(.leading, 52)
-                    }
-
-	                    actionRow(
-	                        icon: "folder.badge.plus",
-                        label: isTracked ? "In Projects ✓" : "Add to Projects Only",
-                        color: isTracked ? .green : .purple
-                    ) {
-                        if !isTracked {
-                            onTrack()
-                        }
-                    }
-                }
-                .whisperPanel(padding: 0, radius: 10)
-                .padding()
-
-                // Clone output log
-                if !cloneOutput.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Output", systemImage: "terminal")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-
-                        Text(cloneOutput)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.primary)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(WhisperTheme.input, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    }
-                    .whisperPanel()
-	                    .padding(.horizontal)
-	                }
-
-                if let gitActionOutput, !gitActionOutput.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Git Action", systemImage: "terminal")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-
-                        Text(gitActionOutput)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.primary)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(WhisperTheme.input, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    }
-                    .whisperPanel()
-                    .padding(.horizontal)
-                }
-
-	                // Local path info
-                Spacer(minLength: 40)
-            }
-        }
-        .navigationTitle(item.repo.name)
-        .platformNavigationTitleDisplayMode(.inline)
-    }
-
-	    private var statusBadges: some View {
-	        VStack(alignment: .trailing, spacing: 8) {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(item.isClonedLocally ? Color.green : Color.orange)
-                    .frame(width: 8, height: 8)
-                Text(item.isClonedLocally ? "Cloned Locally" : "Remote Only")
-                    .font(.caption.bold())
-                    .foregroundStyle(item.isClonedLocally ? .green : .orange)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                (item.isClonedLocally ? Color.green : Color.orange).opacity(0.12),
-                in: Capsule()
-            )
-
-            if hasCodexThread {
-                HStack(spacing: 4) {
-                    Image(systemName: "rectangle.stack.badge.checkmark")
-                    Text("Codex Thread")
-                }
-                .font(.caption.bold())
-                .foregroundStyle(WhisperTheme.info)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(WhisperTheme.info.opacity(0.12), in: Capsule())
-            }
-	        }
-	    }
-
-    private var gitStatusPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("Git Status", systemImage: "point.3.connected.trianglepath.dotted")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Button {
-                    onRefreshGitStatus()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.plain)
-            }
-
-            if let gitStatusError {
-                Text(gitStatusError)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if let gitSnapshot {
-                HStack(spacing: 8) {
-                    gitChip(label: "Branch", value: gitSnapshot.branch, color: .blue)
-                    gitChip(label: "Dirty", value: "\(gitSnapshot.changedFileCount)", color: gitSnapshot.isDirty ? .orange : .green)
-                    gitChip(label: "Ahead", value: countLabel(gitSnapshot.aheadCount), color: (gitSnapshot.aheadCount ?? 0) > 0 ? .orange : .secondary)
-                    gitChip(label: "Behind", value: countLabel(gitSnapshot.behindCount), color: (gitSnapshot.behindCount ?? 0) > 0 ? .red : .secondary)
-                }
-
-                Text(gitSnapshot.originURL ?? "No origin remote")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            } else {
-                Text("Inspecting local git status...")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .whisperPanel(padding: 14, radius: 18)
-    }
-
-    private var workspaceSummaryPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Local Workspace", systemImage: "externaldrive")
-                .font(.caption.bold())
-                .foregroundStyle(.secondary)
-
-            if let workspacePath, !workspacePath.isEmpty {
-                Text(workspacePath)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-
-            if let workspaceSize {
-                infoRow(label: "Size", value: ByteCountFormatter.string(fromByteCount: workspaceSize, countStyle: .file))
-            }
-
-            if let suggestedCommitMessage, let gitSnapshot, gitSnapshot.isDirty {
-                infoRow(label: "Suggested commit", value: suggestedCommitMessage)
-            }
-        }
-        .whisperPanel(padding: 14, radius: 18)
-    }
-
-    private var recentCommitsPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Recent Commits", systemImage: "text.append")
-                .font(.caption.bold())
-                .foregroundStyle(.secondary)
-
-            ForEach(gitSnapshot?.recentCommits ?? [], id: \.self) { commit in
-                HStack(alignment: .top, spacing: 10) {
-                    Text(commit.shortSHA)
-                        .font(.system(.caption, design: .monospaced).weight(.semibold))
-                        .foregroundStyle(WhisperTheme.accent)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(WhisperTheme.accentSoft, in: Capsule())
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(commit.message)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(WhisperTheme.ink)
-                        Text(commit.relativeDate)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-                }
-                .padding(.vertical, 2)
-            }
-        }
-        .whisperPanel(padding: 14, radius: 18)
-    }
-
-    private var hasWorkspaceSummary: Bool {
-        workspacePath != nil || workspaceSize != nil || (gitSnapshot?.isDirty == true && suggestedCommitMessage != nil)
-    }
-
-    private var hasRecentCommits: Bool {
-        !(gitSnapshot?.recentCommits.isEmpty ?? true)
-    }
-
-    private func gitChip(label: String, value: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label.uppercased())
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(red: 0.361, green: 0.380, blue: 0.416))
             Text(value)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(color)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(WhisperTheme.ink)
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Color(red: 0.075, green: 0.078, blue: 0.090), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
     }
+}
 
-    private func infoRow(label: String, value: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(label.uppercased())
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 92, alignment: .leading)
+private struct RepoOutputPanel: View {
+    let title: String
+    let text: String
 
-            Text(value)
-                .font(.caption.weight(.medium))
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
+            Text(text)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(WhisperTheme.ink)
-
-            Spacer(minLength: 0)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color(red: 0.075, green: 0.078, blue: 0.090), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                )
         }
-    }
-
-	    private var codexActionRow: some View {
-	        HStack(spacing: 16) {
-            Image(systemName: codexIcon)
-                .foregroundStyle(codexColor)
-                .font(.system(size: 20))
-                .frame(width: 36)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(codexLabel)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(codexColor)
-                Text(codexSubtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            if isOpeningInCodex {
-                ProgressView()
-                    .tint(.secondary)
-            } else {
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 14)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if !isOpeningInCodex {
-                Task { await onOpenInCodex() }
-            }
-        }
-    }
-
-	    private var cloneActionRow: some View {
-	        HStack(spacing: 16) {
-            Image(systemName: cloneIcon)
-                .foregroundStyle(cloneColor)
-                .font(.system(size: 20))
-                .frame(width: 36)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(cloneLabel)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(cloneColor)
-                Text("Clones into ~/Desktop/local dev")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            if cloneState == .cloning {
-                ProgressView()
-                    .tint(.secondary)
-            } else {
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 14)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if cloneState != .cloning {
-                Task { await onClone() }
-            }
-	        }
-	    }
-
-    private var pushActionRow: some View {
-        gitActionRow(
-            icon: pushIcon,
-            label: pushLabel,
-            subtitle: pushSubtitle,
-            color: pushDisabledReason == nil ? .blue : .secondary,
-            isRunning: gitActionState.isRunning,
-            isBlocked: pushDisabledReason != nil,
-            action: onPush
-        )
-    }
-
-    private var removeLocalActionRow: some View {
-        gitActionRow(
-            icon: "trash",
-            label: removeLocalLabel,
-            subtitle: removeLocalSubtitle,
-            color: removalDisabledReason == nil ? .red : .secondary,
-            isRunning: gitActionState.isRunning,
-            isBlocked: removalDisabledReason != nil,
-            action: onRemoveLocal
-        )
-    }
-
-    private func gitActionRow(
-        icon: String,
-        label: String,
-        subtitle: String,
-        color: Color,
-        isRunning: Bool,
-        isBlocked: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        HStack(spacing: 16) {
-            Image(systemName: icon)
-                .foregroundStyle(color)
-                .font(.system(size: 20))
-                .frame(width: 36)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(color)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-
-            Spacer()
-
-            if isRunning {
-                ProgressView()
-                    .tint(.secondary)
-            } else {
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 14)
-        .contentShape(Rectangle())
-        .opacity(isBlocked ? 0.7 : 1)
-        .onTapGesture {
-            if !isRunning {
-                action()
-            }
-        }
-    }
-
-	    private var codexIcon: String {
-	        if isOpeningInCodex {
-            return "hourglass"
-        }
-        return hasActiveThread ? "rectangle.stack.badge.checkmark" : "rectangle.stack.badge.play"
-    }
-
-    private var codexColor: Color {
-        hasActiveThread ? .green : .blue
-    }
-
-    private var codexLabel: String {
-        if isOpeningInCodex {
-            return item.isClonedLocally ? "Opening in Codex…" : "Preparing Codex Workspace…"
-        }
-        if hasCodexThread {
-            return "Open Existing Thread in Codex"
-        }
-        if hasActiveThread {
-            return "Open Active Thread in Codex"
-        }
-        return item.isClonedLocally ? "Start Thread in Codex" : "Clone and Open in Codex"
-    }
-
-    private var codexSubtitle: String {
-        if hasCodexThread {
-            return "Detected an existing Codex thread for this local workspace."
-        }
-        if hasActiveThread {
-            return "Opens the repo workspace in Codex Desktop."
-        }
-        if item.isClonedLocally {
-            return "Adds it to Projects if needed, marks it active, and opens its local workspace."
-        }
-        return "Clones into local dev if needed, adds it to Projects, then opens the workspace in Codex."
-    }
-
-    private var cloneIcon: String {
-        switch cloneState {
-        case .idle: return "arrow.down.to.line.circle"
-        case .cloning: return "arrow.down.to.line.circle"
-        case .success: return "checkmark.circle.fill"
-        case .failed: return "exclamationmark.triangle"
-        }
-    }
-
-    private var cloneColor: Color {
-        switch cloneState {
-        case .idle: return .blue
-        case .cloning: return .blue
-        case .success: return .green
-        case .failed: return .red
-        }
-    }
-
-	    private var cloneLabel: String {
-	        switch cloneState {
-	        case .idle: return "Clone to Local Dev"
-	        case .cloning: return "Cloning…"
-	        case .success: return "Cloned Successfully"
-	        case .failed(let msg): return "Failed: \(msg)"
-	        }
-	    }
-
-    private var pushIcon: String {
-        switch gitActionState {
-        case .running(.push): return "arrow.up.circle"
-        case .success(.push, _): return "checkmark.circle.fill"
-        case .failed(.push, _): return "exclamationmark.triangle"
-        case .idle: return "arrow.up.circle"
-        case .running(.removeLocal), .success(.removeLocal, _), .failed(.removeLocal, _):
-            return "arrow.up.circle"
-        }
-    }
-
-    private var pushLabel: String {
-        switch gitActionState {
-        case .running(.push): return "Pushing to Remote..."
-        case .success(.push, _): return "Push Complete"
-        case .failed(.push, _): return "Push Failed"
-        case .idle: return "Push to Remote"
-        case .running(.removeLocal), .success(.removeLocal, _), .failed(.removeLocal, _):
-            return "Push to Remote"
-        }
-    }
-
-    private var removeLocalLabel: String {
-        switch gitActionState {
-        case .running(.removeLocal): return "Updating and Removing..."
-        case .success(.removeLocal, _): return "Folder Removed"
-        case .failed(.removeLocal, _): return "Remove Failed"
-        case .idle, .running(.push), .success(.push, _), .failed(.push, _):
-            return "Remove Local Copy"
-        }
-    }
-
-    private var pushSubtitle: String {
-        if let pushDisabledReason { return pushDisabledReason }
-        guard let gitSnapshot else { return "Pushes this branch to its upstream remote." }
-        if gitSnapshot.isDirty {
-            return "Commits \(gitSnapshot.changedFileCount) changed file\(gitSnapshot.changedFileCount == 1 ? "" : "s"), then pushes."
-        }
-        if let ahead = gitSnapshot.aheadCount, ahead > 0 {
-            return "Pushes \(ahead) local commit\(ahead == 1 ? "" : "s") to upstream."
-        }
-        return "Checks the upstream and pushes the current branch."
-    }
-
-    private var removeLocalSubtitle: String {
-        if let removalDisabledReason { return removalDisabledReason }
-        guard let gitSnapshot else {
-            return "Updates upstream, archives matching Codex threads, then moves this folder to Trash."
-        }
-        if gitSnapshot.isDirty {
-            return "Prompts for a commit, syncs upstream, archives matching Codex threads, then moves this folder to Trash."
-        }
-        if let ahead = gitSnapshot.aheadCount, ahead > 0 {
-            return "Pushes \(ahead) local commit\(ahead == 1 ? "" : "s"), archives matching Codex threads, then moves this folder to Trash."
-        }
-        if let behind = gitSnapshot.behindCount, behind > 0 {
-            return "Fast-forward pulls \(behind) upstream commit\(behind == 1 ? "" : "s"), archives matching Codex threads, then moves this folder to Trash."
-        }
-        return "Archives matching Codex threads, then moves this up-to-date folder to Trash."
-    }
-
-    private var gitActionOutput: String? {
-        switch gitActionState {
-        case .success(_, let output), .failed(_, let output):
-            return output
-        case .idle, .running:
-            return nil
-        }
-    }
-
-    private func countLabel(_ count: Int?) -> String {
-        count.map(String.init) ?? "-"
-    }
-
-	    private func actionRow(icon: String, label: String, color: Color, action: @escaping () -> Void) -> some View {
-	        HStack(spacing: 16) {
-            Image(systemName: icon)
-                .foregroundStyle(color)
-                .font(.system(size: 20))
-                .frame(width: 36)
-
-            Text(label)
-                .font(.subheadline.weight(.medium))
-
-            Spacer()
-
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 14)
-        .contentShape(Rectangle())
-        .onTapGesture { action() }
     }
 }

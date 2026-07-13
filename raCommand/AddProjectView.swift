@@ -240,70 +240,38 @@ struct AddProjectView: View {
 
         let repoSlug = normalizedRepoName
         guard let token = KeychainService.loadGitHubToken(), !token.isEmpty else {
-            errorMessage = "No GitHub token found. Add one in Projects > Import > GitHub Import."
+            errorMessage = "No GitHub token found. Add one in Workspaces > Import > Import from GitHub."
             return
         }
 
         isCreating = true
         createdProject = false
         errorMessage = nil
-        stageMessage = "Creating GitHub repository..."
+        defer {
+            stageMessage = nil
+            isCreating = false
+        }
+
+        let project = upsertProject(name: repoSlug, repoURL: "")
+        try? context.save()
 
         do {
-            let repo = try await GitHubActionsService.createRepo(
-                name: repoSlug,
-                isPrivate: false,
-                token: token
+            try await ProjectRepoProvisioner.provision(
+                project: project,
+                repoName: repoSlug,
+                preferredPath: suggestedWorkspacePath,
+                githubToken: token,
+                modelContext: context,
+                onStage: { stageMessage = $0 }
             )
-
-            let project = upsertProject(name: repo.name, repoURL: repo.htmlURL)
-            try context.save()
             createdProject = true
-
-            stageMessage = "Cloning into local dev..."
-
-            let workspacePath: String
-            do {
-                workspacePath = try LocalWorkspaceService.ensureLocalClone(
-                    repoURL: repo.cloneURL,
-                    preferredPath: suggestedWorkspacePath,
-                    rootPath: LocalWorkspaceService.defaultWorkspaceRoot
-                )
-            } catch {
-                project.lastUpdated = Date()
-                try? context.save()
-                errorMessage = "GitHub repo created, but cloning into local dev failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
-                stageMessage = nil
-                isCreating = false
-                return
-            }
-
-            project.localPath = workspacePath
-            project.lastUpdated = Date()
-            try context.save()
-
-            stageMessage = "Opening Codex thread..."
-
-            do {
-                try LocalWorkspaceService.openInCodex(path: workspacePath)
-
-                project.isActiveThread = true
-                project.lastUpdated = Date()
-                project.lastReviewed = Date()
-                try context.save()
-
-                dismiss()
-            } catch {
-                project.lastUpdated = Date()
-                try? context.save()
-                errorMessage = "GitHub repo created and cloned, but Codex could not open the workspace: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
-            }
+            dismiss()
+        } catch let error as ProjectRepoProvisionError {
+            createdProject = !project.repoURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            errorMessage = ProjectRepoProvisioner.describe(error)
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
-
-        stageMessage = nil
-        isCreating = false
     }
 
     @MainActor

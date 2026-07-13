@@ -12,6 +12,9 @@ import UniformTypeIdentifiers
 private enum ShellSection: String, CaseIterable, Identifiable {
     case projects
     case repos
+    case people
+    case invoices
+    case contracts
     case pulse
     case today
     case settings
@@ -20,8 +23,11 @@ private enum ShellSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .projects: return "Projects"
+        case .projects: return "Workspaces"
         case .repos: return "Repos"
+        case .people: return "People"
+        case .invoices: return "Invoices"
+        case .contracts: return "Contracts"
         case .pulse: return "Pulse"
         case .today: return "Today"
         case .settings: return "Settings"
@@ -32,18 +38,53 @@ private enum ShellSection: String, CaseIterable, Identifiable {
         switch self {
         case .projects: return "⌘1"
         case .repos: return "⌘2"
-        case .pulse: return "⌘3"
-        case .today: return "⌘4"
+        case .people: return "⌘3"
+        case .invoices: return "⌘4"
+        case .contracts: return "⌘5"
+        case .pulse: return "⌘6"
+        case .today: return "⌘7"
         case .settings: return nil
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .projects: return "square.grid.2x2"
+        case .repos: return "shippingbox"
+        case .people: return "person.2"
+        case .invoices: return "doc.text"
+        case .contracts: return "doc.plaintext"
+        case .pulse: return "waveform.path.ecg"
+        case .today: return "sun.max"
+        case .settings: return "gearshape.2"
+        }
+    }
+
+    enum Group {
+        case work
+        case awareness
+    }
+
+    var group: Group {
+        switch self {
+        case .projects, .repos, .people, .invoices, .contracts: return .work
+        case .pulse, .today: return .awareness
+        case .settings: return .work // unused — settings is pinned separately
         }
     }
 
     var purpose: String {
         switch self {
         case .projects:
-            return "Command board for active client work and the next clear move."
+            return "Command board for active client workspaces and the next clear move."
         case .repos:
             return "Local mirror manager and Codex workspace surface."
+        case .people:
+            return "Clients and contacts synced from readyaimgo admin."
+        case .invoices:
+            return "Billing synced from readyaimgo admin."
+        case .contracts:
+            return "Agreements synced from readyaimgo admin."
         case .pulse:
             return "Ranked urgency and AI next-step advisor."
         case .today:
@@ -96,8 +137,6 @@ struct MainTabView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            shellTitleBar
-
             HStack(spacing: 0) {
                 sidebar
                 mainContent
@@ -136,36 +175,6 @@ struct MainTabView: View {
         .task { seedIfNeeded() }
     }
 
-    private var shellTitleBar: some View {
-        ZStack {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(Color(red: 0.925, green: 0.416, blue: 0.373))
-                    .frame(width: 12, height: 12)
-                Circle()
-                    .fill(Color(red: 0.957, green: 0.749, blue: 0.310))
-                    .frame(width: 12, height: 12)
-                Circle()
-                    .fill(Color(red: 0.380, green: 0.769, blue: 0.329))
-                    .frame(width: 12, height: 12)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12)
-
-            Text("raCommand")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color(red: 0.435, green: 0.455, blue: 0.490))
-        }
-        .frame(height: 38)
-        .background(Color(red: 0.043, green: 0.047, blue: 0.055))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.white.opacity(0.06))
-                .frame(height: 1)
-        }
-    }
-
     private var sidebar: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
@@ -199,12 +208,18 @@ struct MainTabView: View {
             .padding(.top, 18)
             .padding(.bottom, 16)
 
-            VStack(spacing: 1) {
-                ForEach([ShellSection.projects, .repos, .pulse, .today], id: \.self) { section in
-                    sidebarButton(for: section)
-                }
-            }
-            .padding(.horizontal, 6)
+            sidebarGroup(
+                label: "WORK",
+                sections: [.projects, .repos, .people, .invoices, .contracts]
+            )
+
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(height: 1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
+
+            sidebarGroup(label: "AWARENESS", sections: [.pulse, .today])
 
             Spacer(minLength: 0)
 
@@ -223,20 +238,38 @@ struct MainTabView: View {
         }
     }
 
+    private func sidebarGroup(label: String, sections: [ShellSection]) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .tracking(0.8)
+                .foregroundStyle(Color(red: 0.302, green: 0.322, blue: 0.357))
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
+
+            ForEach(sections, id: \.self) { section in
+                sidebarButton(for: section)
+            }
+        }
+        .padding(.horizontal, 6)
+    }
+
     private func sidebarButton(for section: ShellSection) -> some View {
         let isActive = activeSection == section
 
         return Button {
             activate(section)
         } label: {
-            HStack(spacing: 11) {
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(isActive ? WhisperTheme.accent : (section == .settings ? Color(red: 0.247, green: 0.263, blue: 0.290) : Color(red: 0.361, green: 0.380, blue: 0.416)))
-                    .frame(width: 5, height: 5)
+            HStack(spacing: 10) {
+                Image(systemName: section.icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 16)
+                    .foregroundStyle(isActive ? WhisperTheme.accent : Color(red: 0.435, green: 0.455, blue: 0.490))
 
                 Text(section.title)
                     .font(.system(size: 13, weight: isActive ? .medium : .regular))
                     .foregroundStyle(isActive ? WhisperTheme.ink : Color(red: 0.655, green: 0.671, blue: 0.702))
+                    .lineLimit(1)
 
                 Spacer(minLength: 8)
 
@@ -247,7 +280,7 @@ struct MainTabView: View {
                 }
             }
             .padding(.horizontal, 10)
-            .frame(height: 36)
+            .frame(height: 34)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(isActive ? WhisperTheme.sidebarSelected : .clear)
@@ -272,6 +305,8 @@ struct MainTabView: View {
 
                 if activeSection == .repos {
                     RepoManagerView()
+                } else if activeSection == .settings {
+                    SettingsView()
                 } else {
                     ScrollView {
                         Group {
@@ -304,6 +339,12 @@ struct MainTabView: View {
                                 )
                             case .repos:
                                 EmptyView()
+                            case .people:
+                                PeopleView()
+                            case .invoices:
+                                InvoicesView()
+                            case .contracts:
+                                ContractsView()
                             case .pulse:
                                 ShellStubView(
                                     title: "Pulse",
@@ -312,12 +353,7 @@ struct MainTabView: View {
                                     description: "Pulse will inherit this shell once the core workflow is proven. For now, the redesign keeps the destination visible without carrying forward the legacy dashboard."
                                 )
                             case .settings:
-                                ShellStubView(
-                                    title: "Settings",
-                                    detail: "App memory, build log, and idea inbox.",
-                                    eyebrow: "v1.1",
-                                    description: "Settings remains part of the shell so the information architecture is stable, but the redesign of app memory and logs follows the MVP release."
-                                )
+                                EmptyView()
                             }
                         }
                         .padding(.horizontal, 32)
@@ -472,10 +508,16 @@ private extension View {
             keyboardShortcut("1", modifiers: [.command])
         case .repos:
             keyboardShortcut("2", modifiers: [.command])
-        case .pulse:
+        case .people:
             keyboardShortcut("3", modifiers: [.command])
-        case .today:
+        case .invoices:
             keyboardShortcut("4", modifiers: [.command])
+        case .contracts:
+            keyboardShortcut("5", modifiers: [.command])
+        case .pulse:
+            keyboardShortcut("6", modifiers: [.command])
+        case .today:
+            keyboardShortcut("7", modifiers: [.command])
         case .settings:
             self
         }

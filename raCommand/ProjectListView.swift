@@ -61,10 +61,10 @@ struct ProjectListView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Projects")
+                Text("Workspaces")
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(Color(red: 0.941, green: 0.949, blue: 0.961))
-                Text("\(projects.count) active projects")
+                Text("\(projects.count) active workspace\(projects.count == 1 ? "" : "s")")
                     .font(.system(size: 13))
                     .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
             }
@@ -126,7 +126,7 @@ struct ProjectListView: View {
                 .foregroundStyle(Color(red: 0.361, green: 0.380, blue: 0.416))
                 .padding(.leading, 12)
 
-            TextField("Search projects…", text: $searchText)
+            TextField("Search workspaces…", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(WhisperTheme.ink)
@@ -157,12 +157,23 @@ struct ProjectCard: View {
 
                 Spacer(minLength: 8)
 
-                Text(statusLabel)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 7)
-                    .frame(height: 20)
-                    .background(project.status.whisperColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    .foregroundStyle(project.status.whisperColor)
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text(statusLabel)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .padding(.horizontal, 7)
+                        .frame(height: 20)
+                        .background(project.status.whisperColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .foregroundStyle(project.status.whisperColor)
+
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(syncColor)
+                            .frame(width: 6, height: 6)
+                        Text(syncLabel)
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundStyle(syncColor)
+                    }
+                }
             }
 
             HStack(spacing: 8) {
@@ -232,5 +243,23 @@ struct ProjectCard: View {
 
     private var valueLabel: String {
         "V\(project.valueScore)"
+    }
+
+    private var syncLabel: String {
+        switch project.workspaceSyncStatus ?? .local {
+        case .local: return "NEVER"
+        case .pending: return "PENDING"
+        case .synced: return "SYNCED"
+        case .error: return "ERROR"
+        }
+    }
+
+    private var syncColor: Color {
+        switch project.workspaceSyncStatus ?? .local {
+        case .local: return WhisperTheme.mutedInk
+        case .pending: return WhisperTheme.warning
+        case .synced: return WhisperTheme.success
+        case .error: return WhisperTheme.danger
+        }
     }
 }

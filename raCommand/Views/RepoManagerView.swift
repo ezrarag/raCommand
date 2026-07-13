@@ -48,6 +48,7 @@ struct RepoManagerView: View {
     @State private var repos: [RepoWithLocalState] = []
     @State private var selectedRepo: RepoWithLocalState?
     @State private var isLoading = false
+    @State private var loadStage = "Fetching repos from GitHub…"
     @State private var searchText = ""
     @State private var filterMode: FilterMode = .all
     @State private var showTokenAlert = false
@@ -246,14 +247,28 @@ struct RepoManagerView: View {
 
             Group {
                 if isLoading && repos.isEmpty {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                            .tint(WhisperTheme.mutedInk)
-                        Text("Fetching repos…")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(WhisperTheme.accent)
+                                Text(loadStage)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(Color(red: 0.541, green: 0.561, blue: 0.596))
+                            }
+                            .padding(.bottom, 4)
+
+                            VStack(spacing: 2) {
+                                ForEach(Array(repoSkeletonWidths.enumerated()), id: \.offset) { _, width in
+                                    RepoSkeletonRow(nameWidth: width)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.top, 4)
+                        .padding(.bottom, 12)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if filteredRepos.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(repos.isEmpty ? "No repos loaded" : "No repos match this filter")
@@ -617,11 +632,17 @@ struct RepoManagerView: View {
         }
 
         isLoading = true
+        loadStage = "Fetching repos from GitHub…"
         defer { isLoading = false }
 
         do {
             let fetched = try await GitHubService.fetchRepos(token: token)
-            let activeCodexPaths = LocalWorkspaceService.activeCodexWorkspacePaths(rootPathPrefix: localDevPath)
+
+            loadStage = "Checking local clones…"
+            let devPath = localDevPath
+            let activeCodexPaths = await Task.detached(priority: .userInitiated) {
+                LocalWorkspaceService.activeCodexWorkspacePaths(rootPathPrefix: devPath)
+            }.value
             let nextRepos = fetched
                 .map { repo in
                     RepoWithLocalState(repo: repo, localPath: detectedLocalWorkspacePath(for: repo))
@@ -643,7 +664,8 @@ struct RepoManagerView: View {
                 selectedRepo = nextRepos.first
             }
 
-            refreshGitSnapshots()
+            loadStage = "Reading git status…"
+            await refreshGitSnapshots()
         } catch {
             workspaceActionError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
@@ -826,13 +848,12 @@ struct RepoManagerView: View {
             }.value
 
             gitActionStates[item.repo.id] = .success(.push, result.output)
-            refreshGitSnapshot(for: item)
-            await loadRepos()
+            await refreshGitSnapshot(for: item)
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             gitActionStates[item.repo.id] = .failed(.push, message)
             workspaceActionError = message
-            refreshGitSnapshot(for: item)
+            await refreshGitSnapshot(for: item)
         }
     }
 
@@ -885,38 +906,63 @@ struct RepoManagerView: View {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             gitActionStates[item.repo.id] = .failed(.removeLocal, message)
             workspaceActionError = message
-            refreshGitSnapshot(for: item)
+            await refreshGitSnapshot(for: item)
         }
     }
 
-    private func refreshGitSnapshots() {
-        var nextSnapshots: [Int: LocalGitSnapshot] = [:]
-        var nextErrors: [Int: String] = [:]
-        var nextSizes: [Int: Int64] = [:]
+    /// Scans every cloned repo's disk size and git status. Each repo means a
+    /// recursive filesystem walk plus ~5 `git` subprocess spawns, so this
+    /// always runs off the main thread via Task.detached — doing this
+    /// synchronously on the main actor is what causes the spinning-beachball
+    /// cursor after a load or refresh (the run loop can't process events
+    /// while blocked on dozens of subprocess waits).
+    private func refreshGitSnapshots() async {
+        let targets: [(id: Int, path: String?)] = repos
+            .filter { $0.isClonedLocally }
+            .map { ($0.repo.id, resolvedWorkspacePath(for: $0)) }
 
-        for item in repos where item.isClonedLocally {
-            guard let path = resolvedWorkspacePath(for: item) else {
-                nextErrors[item.repo.id] = "The local workspace path could not be resolved."
-                continue
+        // Each repo's scan is independent (its own subprocess, its own
+        // filesystem subtree), so run them concurrently rather than one at
+        // a time — with 22 local repos, sequential scanning multiplies
+        // subprocess-spawn latency by 22 for no reason.
+        let result = await Task.detached(priority: .userInitiated) { () -> ([Int: LocalGitSnapshot], [Int: String], [Int: Int64]) in
+            await withTaskGroup(of: (Int, Int64?, LocalGitSnapshot?, String?).self) { group in
+                for (id, path) in targets {
+                    group.addTask {
+                        guard let path else {
+                            return (id, nil, nil, "The local workspace path could not be resolved.")
+                        }
+                        let size = await LocalWorkspaceService.directorySizeCached(at: path)
+                        do {
+                            let snapshot = try LocalGitCommandService.status(at: path)
+                            return (id, size, snapshot, nil)
+                        } catch {
+                            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                            return (id, size, nil, message)
+                        }
+                    }
+                }
+
+                var nextSnapshots: [Int: LocalGitSnapshot] = [:]
+                var nextErrors: [Int: String] = [:]
+                var nextSizes: [Int: Int64] = [:]
+
+                for await (id, size, snapshot, error) in group {
+                    if let size { nextSizes[id] = size }
+                    if let snapshot { nextSnapshots[id] = snapshot }
+                    if let error { nextErrors[id] = error }
+                }
+
+                return (nextSnapshots, nextErrors, nextSizes)
             }
+        }.value
 
-            if let size = LocalWorkspaceService.directorySize(at: path) {
-                nextSizes[item.repo.id] = size
-            }
-
-            do {
-                nextSnapshots[item.repo.id] = try LocalGitCommandService.status(at: path)
-            } catch {
-                nextErrors[item.repo.id] = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            }
-        }
-
-        gitSnapshots = nextSnapshots
-        gitStatusErrors = nextErrors
-        workspaceSizes = nextSizes
+        gitSnapshots = result.0
+        gitStatusErrors = result.1
+        workspaceSizes = result.2
     }
 
-    private func refreshGitSnapshot(for item: RepoWithLocalState) {
+    private func refreshGitSnapshot(for item: RepoWithLocalState) async {
         guard item.isClonedLocally, let path = resolvedWorkspacePath(for: item) else {
             gitSnapshots[item.repo.id] = nil
             gitStatusErrors[item.repo.id] = nil
@@ -924,15 +970,28 @@ struct RepoManagerView: View {
             return
         }
 
-        workspaceSizes[item.repo.id] = LocalWorkspaceService.directorySize(at: path)
+        // Always recompute fresh here (not the cached variant) — this runs
+        // right after a push/remove specifically to reflect what just
+        // changed, so serving a stale cached size would defeat the point.
+        let result = await Task.detached(priority: .userInitiated) { () -> (Int64?, LocalGitSnapshot?, String?) in
+            let size = LocalWorkspaceService.directorySize(at: path)
+            do {
+                let snapshot = try LocalGitCommandService.status(at: path)
+                return (size, snapshot, nil)
+            } catch {
+                return (size, nil, (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            }
+        }.value
 
-        do {
-            gitSnapshots[item.repo.id] = try LocalGitCommandService.status(at: path)
-            gitStatusErrors[item.repo.id] = nil
-        } catch {
-            gitSnapshots[item.repo.id] = nil
-            gitStatusErrors[item.repo.id] = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        if let freshSize = result.0 {
+            await DirectorySizeCache.shared.store(freshSize, at: LocalWorkspaceService.normalizedWorkspacePath(path))
+        } else {
+            await DirectorySizeCache.shared.invalidate(LocalWorkspaceService.normalizedWorkspacePath(path))
         }
+
+        workspaceSizes[item.repo.id] = result.0
+        gitSnapshots[item.repo.id] = result.1
+        gitStatusErrors[item.repo.id] = result.2
     }
 
     private func pushDisabledReason(for item: RepoWithLocalState) -> String? {
@@ -1047,6 +1106,50 @@ struct RepoManagerView: View {
         )
         context.insert(project)
         return project
+    }
+}
+
+private let repoSkeletonWidths: [CGFloat] = [150, 110, 175, 130, 95, 160, 120, 145, 105, 165]
+
+private struct RepoSkeletonRow: View {
+    let nameWidth: CGFloat
+    @State private var isPulsing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(WhisperTheme.mutedInk.opacity(0.25))
+                    .frame(width: 6, height: 6)
+
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(WhisperTheme.mutedInk.opacity(0.18))
+                    .frame(width: nameWidth, height: 12)
+
+                Spacer(minLength: 0)
+            }
+
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(WhisperTheme.mutedInk.opacity(0.12))
+                .frame(width: 100, height: 9)
+                .padding(.leading, 14)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(red: 0.075, green: 0.078, blue: 0.090))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.white.opacity(0.05), lineWidth: 1)
+        )
+        .opacity(isPulsing ? 1.0 : 0.45)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                isPulsing = true
+            }
+        }
     }
 }
 

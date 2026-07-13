@@ -64,10 +64,23 @@ struct PortalClient: Identifiable, Decodable, Hashable {
     }
 }
 
+struct RemoteWorkspace: Decodable, Hashable {
+    let id: String
+    let slug: String
+    let name: String
+    let clientId: String?
+    let repoSlug: String?
+}
+
 struct DesktopClient: Identifiable, Decodable, Hashable {
     let id: String
     let name: String
     let storyId: String?
+    let email: String?
+    let workspaceId: String?
+    let activeProducts: [String]
+    let status: String?
+    let updatedAt: String?
 
     var displayName: String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -82,6 +95,52 @@ struct DesktopClient: Identifiable, Decodable, Hashable {
 
         let compact = displayName.replacingOccurrences(of: " ", with: "")
         return String(compact.prefix(2)).uppercased()
+    }
+}
+
+// MARK: - Admin Directory Models (People / Invoices / Contracts)
+
+struct AdminInvoice: Identifiable, Decodable, Hashable {
+    let id: String
+    let clientId: String
+    let workspaceId: String?
+    let invoiceNumber: String
+    let title: String
+    let status: String
+    let totalCents: Int
+    let issueDate: String
+    let dueDate: String
+    let updatedAt: String?
+
+    var displayAmount: String {
+        String(format: "$%.2f", Double(totalCents) / 100.0)
+    }
+}
+
+struct AdminContract: Identifiable, Decodable, Hashable {
+    let id: String
+    let workspaceId: String?
+    let clientId: String?
+    let title: String?
+    let status: String?
+    let type: String?
+    let fileUrl: String?
+    let createdAt: String?
+    let updatedAt: String?
+
+    var displayTitle: String {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Untitled contract" : trimmed
+    }
+
+    var displayStatus: String {
+        let trimmed = status?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return (trimmed.isEmpty ? "draft" : trimmed).capitalized
+    }
+
+    var displayType: String {
+        let trimmed = type?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Scope of work" : trimmed.replacingOccurrences(of: "_", with: " ").capitalized
     }
 }
 
@@ -266,6 +325,50 @@ enum ClientNoteService {
         return try JSONDecoder().decode(Response.self, from: data).clients
     }
 
+    // MARK: - Admin Directory (People / Invoices / Contracts)
+
+    static func fetchInvoices(clientId: String? = nil, workspaceId: String? = nil) async throws -> [AdminInvoice] {
+        var components = URLComponents(string: "\(desktopBaseURL)/api/admin/invoices")!
+        var items: [URLQueryItem] = []
+        if let clientId, !clientId.isEmpty { items.append(URLQueryItem(name: "clientId", value: clientId)) }
+        if let workspaceId, !workspaceId.isEmpty { items.append(URLQueryItem(name: "workspaceId", value: workspaceId)) }
+        if !items.isEmpty { components.queryItems = items }
+        guard let url = components.url else { throw ClientNoteError.invalidResponse }
+
+        var request = URLRequest(url: url)
+        try applyDesktopAuthorization(to: &request)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to load invoices"
+            throw ClientNoteError.serverError(msg)
+        }
+
+        struct Response: Decodable { let data: [AdminInvoice] }
+        return try JSONDecoder().decode(Response.self, from: data).data
+    }
+
+    static func fetchContracts(clientId: String? = nil, workspaceId: String? = nil) async throws -> [AdminContract] {
+        var components = URLComponents(string: "\(desktopBaseURL)/api/contracts")!
+        var items: [URLQueryItem] = []
+        if let clientId, !clientId.isEmpty { items.append(URLQueryItem(name: "clientId", value: clientId)) }
+        if let workspaceId, !workspaceId.isEmpty { items.append(URLQueryItem(name: "workspaceId", value: workspaceId)) }
+        if !items.isEmpty { components.queryItems = items }
+        guard let url = components.url else { throw ClientNoteError.invalidResponse }
+
+        var request = URLRequest(url: url)
+        try applyDesktopAuthorization(to: &request)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to load contracts"
+            throw ClientNoteError.serverError(msg)
+        }
+
+        struct Response: Decodable { let data: [AdminContract] }
+        return try JSONDecoder().decode(Response.self, from: data).data
+    }
+
     static func fetchIdeaCount(clientId: String) async throws -> Int {
         guard let url = URL(string: "\(desktopBaseURL)/api/desktop/clients/\(clientId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? clientId)/ideas") else {
             throw ClientNoteError.noBaseURL
@@ -305,6 +408,53 @@ enum ClientNoteService {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to save idea"
             throw ClientNoteError.serverError(msg)
         }
+    }
+
+    // MARK: - Workspace Sync
+    //
+    // Pushes a locally-created Project (git repo already cloned, Codex
+    // thread already opened) into the readyaimgo admin `workspaces`
+    // collection so it shows up in the admin dashboard alongside
+    // workspaces created there. Local git/Codex setup always happens
+    // first and is never blocked by this call failing.
+
+    static func createRemoteWorkspace(
+        name: String,
+        clientId: String? = nil,
+        repoUrl: String? = nil,
+        tags: [String] = []
+    ) async throws -> RemoteWorkspace {
+        guard let url = URL(string: "\(desktopBaseURL)/api/admin/workspaces") else {
+            throw ClientNoteError.noBaseURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try applyDesktopAuthorization(to: &request)
+
+        var payload: [String: Any] = ["name": name, "source": "racommand"]
+        if let clientId, !clientId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["clientId"] = clientId
+        }
+        if let repoUrl, !repoUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["repoUrl"] = repoUrl
+        }
+        if !tags.isEmpty { payload["tags"] = tags }
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to create workspace"
+            throw ClientNoteError.serverError(msg)
+        }
+
+        struct Response: Decodable {
+            let success: Bool
+            let workspace: RemoteWorkspace
+        }
+
+        return try JSONDecoder().decode(Response.self, from: data).workspace
     }
 
     // MARK: - Portal Account Provisioning

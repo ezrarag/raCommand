@@ -43,6 +43,15 @@ class Project {
     var isActiveThread: Bool = false
     var localPath: String = ""
 
+    // readyaimgo admin workspace sync — nil remoteWorkspaceId means this
+    // Project has never been pushed to the admin `workspaces` collection.
+    // workspaceSyncStatus must stay Optional: a non-optional enum property
+    // crashes SwiftData's automatic lightweight migration on rows that
+    // predate this column ("Passed nil for a non-optional keypath").
+    // Treat nil as .local (never synced) everywhere this is read.
+    var remoteWorkspaceId: String?
+    var workspaceSyncStatus: WorkspaceSyncStatus?
+
     @Relationship(deleteRule: .cascade, inverse: \VoiceNote.project)
     var voiceNotes: [VoiceNote] = []
 
@@ -59,7 +68,9 @@ class Project {
         repoURL: String = "",
         vercelURL: String = "",
         isActiveThread: Bool = false,
-        localPath: String = ""
+        localPath: String = "",
+        remoteWorkspaceId: String? = nil,
+        workspaceSyncStatus: WorkspaceSyncStatus? = .local
     ) {
         self.name = name
         self.status = status
@@ -76,7 +87,16 @@ class Project {
         self.vercelURL = vercelURL
         self.isActiveThread = isActiveThread
         self.localPath = localPath
+        self.remoteWorkspaceId = remoteWorkspaceId
+        self.workspaceSyncStatus = workspaceSyncStatus
     }
+}
+
+enum WorkspaceSyncStatus: String, Codable, CaseIterable {
+    case local
+    case synced
+    case pending
+    case error
 }
 
 extension Project {

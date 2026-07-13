@@ -13,6 +13,8 @@ enum KeychainService {
     private static let service = "com.readyaimgo.raCommand"
     private static let githubTokenAccount = "githubToken"
     private static let desktopSessionTokenAccount = "desktopSessionToken"
+    private static let anthropicAdminKeyAccount = "anthropicAdminKey"
+    private static let openAIAdminKeyAccount = "openAIAdminKey"
 
     @discardableResult
     static func saveGitHubToken(_ token: String) -> Bool {
@@ -42,6 +44,32 @@ enum KeychainService {
 
     static func deleteDesktopSessionToken() {
         deleteToken(account: desktopSessionTokenAccount)
+    }
+
+    @discardableResult
+    static func saveAnthropicAdminKey(_ token: String) -> Bool {
+        saveToken(token, account: anthropicAdminKeyAccount)
+    }
+
+    static func loadAnthropicAdminKey() -> String? {
+        loadToken(account: anthropicAdminKeyAccount)
+    }
+
+    static func deleteAnthropicAdminKey() {
+        deleteToken(account: anthropicAdminKeyAccount)
+    }
+
+    @discardableResult
+    static func saveOpenAIAdminKey(_ token: String) -> Bool {
+        saveToken(token, account: openAIAdminKeyAccount)
+    }
+
+    static func loadOpenAIAdminKey() -> String? {
+        loadToken(account: openAIAdminKeyAccount)
+    }
+
+    static func deleteOpenAIAdminKey() {
+        deleteToken(account: openAIAdminKeyAccount)
     }
 
     private static func saveToken(_ token: String, account: String) -> Bool {

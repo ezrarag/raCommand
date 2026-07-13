@@ -7,6 +7,33 @@
 
 import Foundation
 
+/// Caches `LocalWorkspaceService.directorySize` results so repeatedly
+/// opening/refreshing the Repos tab doesn't re-walk every file in every
+/// local repo each time. Only the cheap dictionary read/write is
+/// actor-isolated — the actual (slow) filesystem walk happens in the
+/// caller, outside the actor, so concurrent scans across repos still run
+/// in parallel instead of serializing through this cache.
+actor DirectorySizeCache {
+    static let shared = DirectorySizeCache()
+
+    private var entries: [String: (size: Int64, computedAt: Date)] = [:]
+
+    func cached(at path: String, maxAge: TimeInterval) -> Int64? {
+        guard let entry = entries[path], Date().timeIntervalSince(entry.computedAt) < maxAge else {
+            return nil
+        }
+        return entry.size
+    }
+
+    func store(_ size: Int64, at path: String) {
+        entries[path] = (size, Date())
+    }
+
+    func invalidate(_ path: String) {
+        entries[path] = nil
+    }
+}
+
 enum LocalWorkspaceError: LocalizedError {
     case missingRepoURL
     case invalidRepoURL
@@ -54,12 +81,53 @@ struct CodexThreadArchiveResult {
     }
 }
 
+enum LaunchTarget: String, CaseIterable, Identifiable {
+    case codex = "Codex"
+    case antigravity = "Antigravity"
+    case claude = "Claude"
+
+    var id: String { self.rawValue }
+}
+
 enum LocalWorkspaceService {
     static let defaultWorkspaceRoot = "/Users/ehauga/Desktop/local dev"
 
     #if os(macOS)
-    private static let codexCLIPath = "/Applications/Codex.app/Contents/Resources/codex"
+    // OpenAI has shipped Codex both as a standalone app and bundled inside
+    // ChatGPT desktop's Resources — which one exists varies by machine and
+    // install date, so check every known location rather than hardcoding
+    // one path that silently breaks when the packaging changes again.
+    private static let codexCLICandidatePaths = [
+        "/Applications/Codex.app/Contents/Resources/codex",
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "/opt/homebrew/bin/codex",
+        "/usr/local/bin/codex",
+        NSHomeDirectory() + "/.codex/bin/codex",
+        NSHomeDirectory() + "/.local/bin/codex"
+    ]
     private static let codexHomePath = NSHomeDirectory() + "/.codex"
+
+    private static func resolvedCodexCLIPath() -> String? {
+        if let found = codexCLICandidatePaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return found
+        }
+
+        // Last resort: ask the shell's PATH, in case codex was installed via
+        // npm/brew somewhere not covered above.
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = ["codex"]
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+        guard (try? process.run()) != nil else { return nil }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        let path = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let path, !path.isEmpty, FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        return path
+    }
     #endif
 
     static func workspaceExists(at path: String) -> Bool {
@@ -111,6 +179,18 @@ enum LocalWorkspaceService {
         }
 
         return totalBytes
+    }
+
+    /// Same as `directorySize`, but skips the filesystem walk if a result
+    /// for this path was computed within `maxAge` seconds.
+    static func directorySizeCached(at path: String, maxAge: TimeInterval = 300) async -> Int64? {
+        let normalizedPath = normalizedWorkspacePath(path)
+        if let cached = await DirectorySizeCache.shared.cached(at: normalizedPath, maxAge: maxAge) {
+            return cached
+        }
+        guard let size = directorySize(at: normalizedPath) else { return nil }
+        await DirectorySizeCache.shared.store(size, at: normalizedPath)
+        return size
     }
 
     static func suggestedLocalPath(for repoURL: String, rootPath: String = defaultWorkspaceRoot) -> String? {
@@ -188,7 +268,7 @@ enum LocalWorkspaceService {
         }
 
         #if os(macOS)
-        guard FileManager.default.isExecutableFile(atPath: codexCLIPath) else {
+        guard let codexCLIPath = resolvedCodexCLIPath() else {
             throw LocalWorkspaceError.codexUnavailable
         }
 
@@ -200,6 +280,48 @@ enum LocalWorkspaceService {
             try process.run()
         } catch {
             throw LocalWorkspaceError.failedToLaunchCodex(error.localizedDescription)
+        }
+        #else
+        throw LocalWorkspaceError.unsupportedPlatform
+        #endif
+    }
+
+    static func openInAntigravity(path: String) throws {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard workspaceExists(at: trimmedPath) else {
+            throw LocalWorkspaceError.workspaceMissing
+        }
+
+        #if os(macOS)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-a", "Antigravity", trimmedPath]
+
+        do {
+            try process.run()
+        } catch {
+            throw LocalWorkspaceError.failedToLaunchCodex("Failed to launch Antigravity: \(error.localizedDescription)")
+        }
+        #else
+        throw LocalWorkspaceError.unsupportedPlatform
+        #endif
+    }
+
+    static func openInClaude(path: String) throws {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard workspaceExists(at: trimmedPath) else {
+            throw LocalWorkspaceError.workspaceMissing
+        }
+
+        #if os(macOS)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-a", "Claude", trimmedPath]
+
+        do {
+            try process.run()
+        } catch {
+            throw LocalWorkspaceError.failedToLaunchCodex("Failed to launch Claude: \(error.localizedDescription)")
         }
         #else
         throw LocalWorkspaceError.unsupportedPlatform

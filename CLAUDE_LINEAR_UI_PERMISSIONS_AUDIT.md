@@ -1,81 +1,93 @@
-# CLAUDE.md: raCommand Linear UI + Permissions Audit
+# raCommand UI + Sync Audit
 
-Use this as the implementation prompt for the Linear-style UI pass and local/offline RAG permissions pass.
+Supersedes an earlier draft of this file that described `AppShellView`,
+`IntelligenceFeedView`, `AIThreadsView`, `RagIntelligenceService`, and
+`AccountSessionStore` — none of these exist in the current codebase. That
+draft assumed a Firebase-Auth-backed Firestore client inside raCommand.
+`OLD_RACOMMAND_PARITY_AUDIT.md` documents the actual decision: Firebase was
+deliberately dropped from raCommand in favor of plain HTTP calls to the
+readyaimgo admin API. Do not reintroduce Firebase/Firestore client code to
+raCommand based on the old draft — it describes a path that was rejected.
 
-## Audit Findings
+## Current architecture (accurate as of this audit)
 
-- `AppShellView.swift` uses a narrow icon-only sidebar rail. A Linear-style workspace header needs a wider compact sidebar with app logo, workspace/project name, and pinned Settings.
-- `IntelligenceFeedView.swift` and `AIThreadsView.swift` use standard `Section(group.label)` list headers. Replace them with custom `HStack` headers using `Font.system(size: 11, weight: .semibold)` and `.secondary` foreground color.
-- `SettingsView.swift` is custom rather than `List` based, but it should become denser and less editorial: smaller section labels, lower radius, less hero weight.
-- `IntelligenceFeedView` currently exposes Firestore permission failures as bright red error text. Replace with a desaturated dark-mode permission panel.
-- `RagIntelligenceService` reads `ragIntelligence` globally with no Firebase Auth and no `ownerUid` filter. Local "Missing or insufficient permissions" is expected when Firestore rules deny unauthenticated global reads.
-- The app session in `AccountSessionStore` is not Firebase Auth. A raCommand Keychain session token does not authenticate Firestore client reads.
+**Shell**: `Views/MainTabView.swift` — a `private enum ShellSection` drives
+a Linear-style sidebar + content switch. Current sections: Workspaces
+(`.projects`), Repos, People, Invoices, Contracts, Pulse, Today, Settings.
+Pulse and Settings are still `ShellStubView` placeholders tagged `v1.1` —
+real `PulseView.swift`/`SettingsView.swift` exist as files but aren't wired
+into the shell yet.
 
-## Required Implementation
+**Networking**: plain `URLSession`, no Firebase, no Alamofire.
+`Services/ClientNoteService.swift` is the shared home for every call to
+`readyaimgo.biz` / `clients.readyaimgo.biz`: client feedback, RAG notes,
+the People/Invoices/Contracts directory reads, and workspace-create sync.
+`Services/GitHubService*.swift` is a separate URLSession layer for the
+GitHub API (repo creation, collaborators, actions).
 
-1. Add a shared `LinearSectionHeader` component:
+**Auth**: a single Bearer token (`READYAIMGO_INTERNAL_API_KEY` /
+`RAG_INTERNAL_API_KEY` env var, or a Keychain-stored desktop session token
+via `KeychainService.loadDesktopSessionToken()`) is attached by
+`ClientNoteService.applyDesktopAuthorization(to:)`. The admin backend
+checks this same value via `isInternalReadAuthorized` /
+`isInternalMutationAuthorized` (`lib/internal-api-auth.ts` in the admin
+repo). There is no per-user Firebase Auth session and no client-side
+Firestore security-rules concept in raCommand — raCommand is a single
+trusted operator client, and access control lives entirely server-side on
+the admin API.
 
-```swift
-struct LinearSectionHeader: View {
-    let title: String
-    let count: Int?
+**Local Git + Codex pipeline** (do not disturb): `Services/LocalWorkspaceService.swift`
+owns `git clone`, launching Codex Desktop, and reading/archiving Codex
+thread state from `~/.codex/state_*.sqlite`. The actual sequencing — create
+GitHub repo → clone locally → **sync workspace to admin** (best effort,
+non-blocking — failure only sets `Project.workspaceSyncStatus`, never
+blocks the local flow) → open Codex thread — lives in one place,
+`Services/ProjectRepoProvisioner.swift`. `AddProjectView.swift` and
+`ProjectDetailView.swift`'s `CreateProjectRepositorySheet` both call
+`ProjectRepoProvisioner.provision(...)` rather than duplicating the
+sequence; each call site only owns its own pre-step (creating/finding the
+`Project` record) and its own error-message copy via
+`ProjectRepoProvisioner.describe(_:)`, since the two views have slightly
+different partial-failure UX (`AddProjectView` allows "Done" after a
+partial failure once the repo exists; the sheet blocks on any failure).
 
-    init(_ title: String, count: Int? = nil) {
-        self.title = title
-        self.count = count
-    }
+**Workspace sync**: `Project` (SwiftData model, `Project.swift`) carries
+`remoteWorkspaceId: String?` and `workspaceSyncStatus: WorkspaceSyncStatus`
+(`.local` / `.pending` / `.synced` / `.error`), populated by
+`ClientNoteService.createRemoteWorkspace(name:clientId:repoUrl:tags:)`
+which calls `POST /api/admin/workspaces` on the admin repo. The sync
+status is surfaced as a badge in `ProjectDetailView`'s repo pane.
 
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(title.uppercased()).lineLimit(1)
-            Spacer(minLength: 8)
-            if let count {
-                Text("\(count)")
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-            }
-        }
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
-        .textCase(nil)
-    }
-}
-```
+**People / Invoices / Contracts tabs**: read-only mirrors of the admin
+system of record, built as `Views/PeopleView.swift`,
+`Views/InvoicesView.swift`, `Views/ContractsView.swift`. They call
+`ClientNoteService.fetchDesktopClients()` (`GET /api/desktop/clients`),
+`fetchInvoices()` (`GET /api/admin/invoices`, a new collection-group
+endpoint since invoices live at `clients/{id}/invoices` in Firestore), and
+`fetchContracts()` (`GET /api/contracts`, already existed). None of these
+support create/edit from raCommand yet — that's still admin-only.
 
-2. Replace `Section(group.label)` in the Intelligence and AI Threads sidebars with:
+## What's still genuinely open
 
-```swift
-Section {
-    ForEach(group.threads) { thread in
-        // existing row
-    }
-} header: {
-    LinearSectionHeader(group.label, count: group.threads.count)
-}
-```
-
-3. Add a workspace header to the regular-size sidebar using the app icon and `raCommand / Readyaimgo` labels. Expand the rail width to roughly 216-232 points if text labels are included.
-
-4. Add a desaturated permission palette to `WhisperTheme`, using a dark brown-gray surface, muted border, warm title, and muted body text. Do not render Firestore permission failures with bright `.red`.
-
-5. Add explicit RAG access mode:
-
-```swift
-enum RagAccessMode: Equatable {
-    case localOffline
-    case operatorDirect
-    case userScoped(ownerUid: String)
-}
-```
-
-In local/offline mode, do not open a Firestore listener. Return empty groups with no error. In user mode, query `whereField("ownerUid", isEqualTo: ownerUid).order(by: "updatedAt", descending: true)`.
-
-6. If the product requirement is an Architect tab, add it explicitly to `AppTab` and keep it visible in local/offline mode. Use `AIThreadsView` as the first local/offline implementation if no dedicated `ArchitectView` exists.
+- Pulse and Settings tabs are stubs (`v1.1` — pre-existing, not part of
+  this audit's scope).
+- People/Invoices/Contracts are read-only. Create/edit from raCommand
+  (e.g. drafting an invoice or generating a contract with AI, per the
+  original integration proposal) is not implemented.
+- No visible sync-status indicator in the Workspaces list rows yet — only
+  in the workspace detail view.
+- No local caching/offline mode for the new directory tabs — every tab
+  open triggers a fresh network fetch, with no persisted fallback if the
+  admin API is unreachable.
 
 ## Verification
 
-- Build the macOS target.
-- Launch signed out and confirm local/offline views do not trigger Firestore permission errors.
-- Confirm Architect is visible if implemented.
-- Confirm custom 11-point section headers render in Intelligence and AI Threads.
-- Confirm permission errors render as a restrained operational panel, not red destructive text.
+- `xcodebuild -project raCommand.xcodeproj -scheme raCommand -destination 'platform=macOS' build`
+  must succeed (file-system-synchronized groups mean new files under
+  `Views/`/`Services/` are picked up automatically — no `project.pbxproj`
+  edits needed).
+- Exercise the "new project" flow (`AddProjectView`) and confirm the repo
+  clones locally and Codex opens even if the admin API is unreachable
+  (sync failure must be silent/non-blocking).
+- Open People, Invoices, and Contracts tabs against a real
+  `READYAIMGO_INTERNAL_API_KEY` and confirm data loads.

@@ -70,17 +70,24 @@ enum LocalGitInspector {
         }
 
         #if os(macOS)
-        let repoCheck = try runGit(["rev-parse", "--is-inside-work-tree"], at: trimmedPath)
-        guard repoCheck.status == 0,
-              repoCheck.output.trimmingCharacters(in: .whitespacesAndNewlines) == "true" else {
-            throw LocalGitInspectorError.notGitRepository
+        // A single `git status --porcelain=v2 --branch` covers what used to be
+        // three separate calls: the repo-existence check (non-zero exit with
+        // "not a git repository" on failure), the current branch name
+        // (`# branch.head`), and ahead/behind vs. upstream (`# branch.ab`) —
+        // all read from the same process's output instead of one spawn each.
+        let branchStatusResult = try runGit(["status", "--porcelain=v2", "--branch"], at: trimmedPath)
+        guard branchStatusResult.status == 0 else {
+            if branchStatusResult.output.lowercased().contains("not a git repository") {
+                throw LocalGitInspectorError.notGitRepository
+            }
+            throw LocalGitInspectorError.commandFailed(branchStatusResult.output)
         }
 
+        let branchHeaders = parseBranchHeaders(output: branchStatusResult.output)
+
         let branchName: String = {
-            if let branch = try? runGit(["branch", "--show-current"], at: trimmedPath),
-               branch.status == 0 {
-                let trimmed = branch.output.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { return trimmed }
+            if let head = branchHeaders.head, head != "(detached)" {
+                return head
             }
 
             if let head = try? runGit(["rev-parse", "--short", "HEAD"], at: trimmedPath),
@@ -92,16 +99,14 @@ enum LocalGitInspector {
             return "detached HEAD"
         }()
 
+        // File-level status (staged/unstaged/untracked counts, changed-file
+        // list) keeps using the original --porcelain (v1) parser unchanged —
+        // that logic feeds commit-message generation and push/removal safety
+        // checks, so it's not worth touching just to shave one more spawn.
         let statusOutput = try runGit(["status", "--porcelain"], at: trimmedPath)
         let statusCounts = parseStatus(output: statusOutput.output)
 
-        let aheadBehind: (behind: Int?, ahead: Int?) = {
-            guard let result = try? runGit(["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], at: trimmedPath),
-                  result.status == 0 else {
-                return (nil, nil)
-            }
-            return parseAheadBehind(output: result.output)
-        }()
+        let aheadBehind: (behind: Int?, ahead: Int?) = (branchHeaders.behind, branchHeaders.ahead)
 
         let recentCommits: [LocalGitCommitSummary] = {
             guard let result = try? runGit(
@@ -232,15 +237,33 @@ enum LocalGitInspector {
         return LocalGitChangedFile(path: path, kind: kind)
     }
 
-    private static func parseAheadBehind(output: String) -> (behind: Int?, ahead: Int?) {
-        let parts = output
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(whereSeparator: \.isWhitespace)
+    /// Parses the `# branch.*` header lines from `git status --porcelain=v2 --branch`.
+    /// `branch.ab` (ahead/behind) is only present when an upstream is configured,
+    /// so ahead/behind correctly stay nil with no upstream — same semantics as
+    /// the old `rev-list --left-right --count @{upstream}...HEAD` call.
+    private static func parseBranchHeaders(output: String) -> (head: String?, ahead: Int?, behind: Int?) {
+        var head: String?
+        var ahead: Int?
+        var behind: Int?
 
-        guard parts.count >= 2 else { return (nil, nil) }
-        let behind = Int(parts[0])
-        let ahead = Int(parts[1])
-        return (behind, ahead)
+        for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard line.hasPrefix("# branch.") else { continue }
+            let content = line.dropFirst("# branch.".count)
+
+            if content.hasPrefix("head ") {
+                head = String(content.dropFirst("head ".count))
+            } else if content.hasPrefix("ab ") {
+                for part in content.dropFirst("ab ".count).split(separator: " ") {
+                    if part.hasPrefix("+") {
+                        ahead = Int(part.dropFirst())
+                    } else if part.hasPrefix("-") {
+                        behind = Int(part.dropFirst())
+                    }
+                }
+            }
+        }
+
+        return (head, ahead, behind)
     }
 
     private static func parseRecentCommits(output: String) -> [LocalGitCommitSummary] {

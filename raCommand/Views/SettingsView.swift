@@ -8,11 +8,33 @@
 import SwiftUI
 import SwiftData
 
+private enum SettingsSection: String, CaseIterable, Identifiable {
+    case general
+    case sync
+    case diagnostics
+    case aiUsage
+    case notes
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .general: return "General"
+        case .sync: return "Sync"
+        case .diagnostics: return "Diagnostics"
+        case .aiUsage: return "AI Usage"
+        case .notes: return "Notes"
+        }
+    }
+}
+
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var appMetas: [AppMeta]
     @Query(sort: \BuildNote.date, order: .reverse) private var buildNotes: [BuildNote]
     @Query(sort: \IdeaNote.createdAt, order: .reverse) private var ideaNotes: [IdeaNote]
+
+    @State private var section: SettingsSection = .general
 
     private var appMeta: AppMeta? {
         appMetas.first
@@ -20,49 +42,107 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    hero
+            HStack(spacing: 0) {
+                settingsSubNav
 
-                    if let meta = appMeta {
-                        editorPanel(
-                            eyebrow: "About raCommand",
-                            title: "What this app is for",
-                            text: Binding(
-                                get: { meta.appDescription },
-                                set: { meta.appDescription = $0; meta.updatedAt = Date() }
-                            ),
-                            prompt: "Describe the app in one or two grounded paragraphs."
-                        )
-
-                        editorPanel(
-                            eyebrow: "Current focus",
-                            title: "What the build is chasing now",
-                            text: Binding(
-                                get: { meta.currentFocus },
-                                set: { meta.currentFocus = $0; meta.updatedAt = Date() }
-                            ),
-                            prompt: "Capture the current build focus and what should ship next."
-                        )
-                    } else {
-                        WhisperEmptyState(
-                            icon: "gearshape.2",
-                            title: "Settings data missing",
-                            message: "Launch the app shell once so the single-row metadata record can be seeded."
-                        )
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        sectionContent
                     }
-
-                    buildNotesPanel
-                    ideaInboxPanel
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+                    .padding(.bottom, 36)
+                    .frame(maxWidth: 640, alignment: .leading)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 14)
-                .padding(.bottom, 36)
+                .frame(maxWidth: .infinity)
             }
             .whisperShell()
             .quickIdeaToolbar()
             .navigationTitle("Settings")
             .platformNavigationTitleDisplayMode(.large)
+        }
+    }
+
+    private var settingsSubNav: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Settings")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(WhisperTheme.ink)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 10)
+
+            ForEach(SettingsSection.allCases) { item in
+                let isActive = section == item
+                Button {
+                    section = item
+                } label: {
+                    Text(item.label)
+                        .font(.system(size: 13, weight: isActive ? .semibold : .regular))
+                        .foregroundStyle(isActive ? WhisperTheme.info : Color(red: 0.655, green: 0.671, blue: 0.702))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .background(
+                            isActive ? WhisperTheme.accent.opacity(0.10) : .clear,
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(24)
+        .frame(width: 200, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(width: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var sectionContent: some View {
+        switch section {
+        case .general:
+            hero
+
+            if let meta = appMeta {
+                editorPanel(
+                    eyebrow: "About raCommand",
+                    title: "What this app is for",
+                    text: Binding(
+                        get: { meta.appDescription },
+                        set: { meta.appDescription = $0; meta.updatedAt = Date() }
+                    ),
+                    prompt: "Describe the app in one or two grounded paragraphs."
+                )
+
+                editorPanel(
+                    eyebrow: "Current focus",
+                    title: "What the build is chasing now",
+                    text: Binding(
+                        get: { meta.currentFocus },
+                        set: { meta.currentFocus = $0; meta.updatedAt = Date() }
+                    ),
+                    prompt: "Capture the current build focus and what should ship next."
+                )
+            } else {
+                WhisperEmptyState(
+                    icon: "gearshape.2",
+                    title: "Settings data missing",
+                    message: "Launch the app shell once so the single-row metadata record can be seeded."
+                )
+            }
+        case .sync:
+            AdminSyncKeyPanelView()
+            GitHubTokenPanelView()
+        case .diagnostics:
+            SystemDiagnosticsPanelView()
+        case .aiUsage:
+            AIUsagePanelView()
+        case .notes:
+            buildNotesPanel
+            ideaInboxPanel
         }
     }
 

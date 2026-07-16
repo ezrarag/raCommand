@@ -12,6 +12,7 @@ enum ProjectDetailWorkbenchTab: String, CaseIterable, Identifiable {
     case clientNotes
     case people
     case repos
+    case vercel
 
     var id: String { rawValue }
 
@@ -21,6 +22,7 @@ enum ProjectDetailWorkbenchTab: String, CaseIterable, Identifiable {
         case .clientNotes: return "Client Notes"
         case .people: return "Team"
         case .repos: return "Repos"
+        case .vercel: return "Deploys"
         }
     }
 }
@@ -134,6 +136,8 @@ struct ProjectDetailView: View {
             peoplePane
         case .repos:
             reposPane
+        case .vercel:
+            ProjectVercelView(project: project)
         }
     }
 

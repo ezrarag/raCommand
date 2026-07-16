@@ -136,6 +136,7 @@ struct SettingsView: View {
         case .sync:
             AdminSyncKeyPanelView()
             GitHubTokenPanelView()
+            VercelTokenPanelView()
         case .diagnostics:
             SystemDiagnosticsPanelView()
         case .aiUsage:

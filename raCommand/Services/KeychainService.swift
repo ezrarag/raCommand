@@ -15,6 +15,8 @@ enum KeychainService {
     private static let desktopSessionTokenAccount = "desktopSessionToken"
     private static let anthropicAdminKeyAccount = "anthropicAdminKey"
     private static let openAIAdminKeyAccount = "openAIAdminKey"
+    private static let vercelTokenAccount = "vercelToken"
+    private static let vercelTeamIdAccount = "vercelTeamId"
 
     @discardableResult
     static func saveGitHubToken(_ token: String) -> Bool {
@@ -31,6 +33,36 @@ enum KeychainService {
 
     static func hasGitHubToken() -> Bool {
         loadGitHubToken() != nil
+    }
+
+    @discardableResult
+    static func saveVercelToken(_ token: String) -> Bool {
+        saveToken(token, account: vercelTokenAccount)
+    }
+
+    static func loadVercelToken() -> String? {
+        loadToken(account: vercelTokenAccount)
+    }
+
+    static func deleteVercelToken() {
+        deleteToken(account: vercelTokenAccount)
+    }
+
+    static func hasVercelToken() -> Bool {
+        loadVercelToken() != nil
+    }
+
+    @discardableResult
+    static func saveVercelTeamId(_ teamId: String) -> Bool {
+        saveToken(teamId, account: vercelTeamIdAccount)
+    }
+
+    static func loadVercelTeamId() -> String? {
+        loadToken(account: vercelTeamIdAccount)
+    }
+
+    static func deleteVercelTeamId() {
+        deleteToken(account: vercelTeamIdAccount)
     }
 
     @discardableResult

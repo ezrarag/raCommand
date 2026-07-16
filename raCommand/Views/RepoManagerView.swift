@@ -65,6 +65,7 @@ struct RepoManagerView: View {
     @State private var pendingPushRepo: RepoWithLocalState?
     @State private var pendingRemovalRepo: RepoWithLocalState?
     @State private var pendingRemovalCommitRepo: RepoWithLocalState?
+    @State private var pendingForceRemovalRepo: RepoWithLocalState?
     @State private var commitMessage = ""
 
     private let localDevPath = "/Users/ehauga/Desktop/local dev"
@@ -198,6 +199,57 @@ struct RepoManagerView: View {
             }
         } message: {
             Text(removalConfirmationMessage)
+        }
+        .alert("Force Remove Local Copy?", isPresented: Binding(
+            get: { pendingForceRemovalRepo != nil },
+            set: { newValue in
+                if !newValue {
+                    pendingForceRemovalRepo = nil
+                    commitMessage = ""
+                }
+            }
+        )) {
+            if gitSnapshots[pendingForceRemovalRepo?.repo.id ?? 0]?.isDirty == true {
+                TextField("Commit message (optional)", text: $commitMessage)
+                Button("Push & Force Remove", role: .destructive) {
+                    let item = pendingForceRemovalRepo
+                    let message = commitMessage
+                    pendingForceRemovalRepo = nil
+                    commitMessage = ""
+                    if let item {
+                        Task { await removeLocalCopy(item, commitMessage: message.isEmpty ? nil : message, force: true) }
+                    }
+                }
+            } else {
+                Button("Push & Force Remove", role: .destructive) {
+                    let item = pendingForceRemovalRepo
+                    pendingForceRemovalRepo = nil
+                    if let item {
+                        Task { await removeLocalCopy(item, commitMessage: nil, force: true) }
+                    }
+                }
+            }
+
+            Button("Force Remove Immediately", role: .destructive) {
+                let item = pendingForceRemovalRepo
+                pendingForceRemovalRepo = nil
+                commitMessage = ""
+                if let item {
+                    Task { await removeLocalCopy(item, commitMessage: nil, force: true) }
+                }
+            }
+
+            Button("Cancel", role: .cancel) {
+                pendingForceRemovalRepo = nil
+                commitMessage = ""
+            }
+        } message: {
+            if let item = pendingForceRemovalRepo {
+                let reason = removalDisabledReason(for: item) ?? "This workspace is out of sync."
+                Text("\(reason)\n\nIf your hard drive is full, you can force-remove the local copy. Any unpushed local work may be lost.")
+            } else {
+                Text("This workspace is out of sync. If your hard drive is full, you can force-remove the local copy.")
+            }
         }
         .task {
             if repos.isEmpty {
@@ -586,7 +638,7 @@ struct RepoManagerView: View {
         RepoActionButtonConfiguration(
             title: removeButtonTitle(for: item),
             tone: .danger,
-            disabled: removalDisabledReason(for: item) != nil || gitActionStates[item.repo.id]?.isRunning == true
+            disabled: !item.isClonedLocally || gitActionStates[item.repo.id]?.isRunning == true
         )
     }
 
@@ -858,8 +910,17 @@ struct RepoManagerView: View {
     }
 
     private func requestLocalRemoval(_ item: RepoWithLocalState) {
-        if let reason = removalDisabledReason(for: item) {
-            workspaceActionError = reason
+        if removalDisabledReason(for: item) != nil {
+            if gitSnapshots[item.repo.id]?.isDirty == true {
+                commitMessage = LocalGitCommandService.suggestedCommitMessage(
+                    for: gitSnapshots[item.repo.id],
+                    repoName: item.repo.name,
+                    isRemovalFlow: true
+                )
+            } else {
+                commitMessage = ""
+            }
+            pendingForceRemovalRepo = item
             return
         }
 
@@ -876,7 +937,7 @@ struct RepoManagerView: View {
         pendingRemovalRepo = item
     }
 
-    private func removeLocalCopy(_ item: RepoWithLocalState, commitMessage: String?) async {
+    private func removeLocalCopy(_ item: RepoWithLocalState, commitMessage: String?, force: Bool = false) async {
         guard let path = resolvedWorkspacePath(for: item) else {
             workspaceActionError = "The local workspace path could not be resolved."
             return
@@ -885,9 +946,9 @@ struct RepoManagerView: View {
         gitActionStates[item.repo.id] = .running(.removeLocal)
         do {
             let result = try await Task.detached(priority: .userInitiated) {
-                let prepare = try LocalGitCommandService.prepareForRemoval(at: path, commitMessage: commitMessage)
+                let prepare = try LocalGitCommandService.prepareForRemoval(at: path, commitMessage: commitMessage, force: force)
                 let archive = try LocalWorkspaceService.archiveCodexThreads(forWorkspacePath: path)
-                let trash = try LocalGitCommandService.moveCleanWorkspaceToTrash(at: path)
+                let trash = try LocalGitCommandService.moveCleanWorkspaceToTrash(at: path, force: force)
                 return LocalGitCommandResult(output: [
                     prepare.output,
                     archive.message,

@@ -343,32 +343,99 @@ enum LocalGitCommandService {
         repoName: String,
         isRemovalFlow: Bool = false
     ) -> String {
-        let fallback = "Update \(repoName)"
+        let fallback = "chore: update \(repoName)"
         guard let snapshot, snapshot.isDirty, !snapshot.changedFiles.isEmpty else {
-            return isRemovalFlow ? "\(fallback) before removal" : fallback
+            return isRemovalFlow ? "chore: prep \(repoName) before removal" : fallback
         }
 
-        let baseMessage: String = {
-            if snapshot.changedFiles.count == 1, let change = snapshot.changedFiles.first {
-                return "\(actionVerb(for: change.kind)) \(displayName(for: change.path))"
+        // 1. Try to determine the scope from the active branch name (if it's not main/master)
+        let branchScope: String? = {
+            let branch = snapshot.branch
+            guard branch != "main" && branch != "master" && branch != "head" else {
+                return nil
             }
-
-            if isGitSyncChange(snapshot.changedFiles) {
-                return "Update git sync workflow"
-            }
-
-            let topLevelDirectories = Set(snapshot.changedFiles.compactMap(topLevelDirectory))
-            if topLevelDirectories.count == 1, let directory = topLevelDirectories.first {
-                return groupedMessage(for: directory)
-            }
-
-            return fallback
+            // Strip common branch prefixes like "feature/", "bugfix/", "codex/"
+            let cleanBranch = branch
+                .replacingOccurrences(of: "feature/", with: "")
+                .replacingOccurrences(of: "bugfix/", with: "")
+                .replacingOccurrences(of: "hotfix/", with: "")
+                .replacingOccurrences(of: "codex/", with: "")
+                .replacingOccurrences(of: "claude/", with: "")
+            
+            // Limit length and keep it simple
+            let parts = cleanBranch.split(separator: "/")
+            let scope = String(parts.last ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return scope.isEmpty ? nil : scope
         }()
 
-        if isRemovalFlow, baseMessage == fallback {
-            return "\(baseMessage) before removal"
+        // 2. Classify the type of changes based on file extensions and paths
+        let type: String = {
+            let paths = snapshot.changedFiles.map { $0.path.lowercased() }
+            
+            // If any test files changed, mark as test
+            if paths.contains(where: { $0.contains("test") }) {
+                return "test"
+            }
+            
+            // If only markdown or documentation changed, mark as docs
+            if paths.allSatisfy({ $0.hasSuffix(".md") || $0.hasSuffix(".txt") }) {
+                return "docs"
+            }
+            
+            // If it's build configuration or package dependencies
+            if paths.contains(where: {
+                $0.hasSuffix(".pbxproj") || $0.hasSuffix(".plist") || $0.hasSuffix(".json") ||
+                $0.contains("package.swift") || $0.contains("podfile") || $0.contains("gemfile")
+            }) {
+                return "build"
+            }
+            
+            // If it's code refactoring or cleaning up
+            if paths.contains(where: { $0.contains("refactor") || $0.contains("cleanup") }) {
+                return "refactor"
+            }
+            
+            // If it's UI view files, mark as ui or feat
+            if paths.contains(where: { $0.contains("view") || $0.hasSuffix(".storyboard") || $0.hasSuffix(".xib") }) {
+                return "ui"
+            }
+            
+            return "feat"
+        }()
+
+        // 3. Construct the description
+        let description: String = {
+            let files = snapshot.changedFiles
+            if files.count == 1, let change = files.first {
+                let verb = actionVerb(for: change.kind).lowercased()
+                let name = displayName(for: change.path)
+                return "\(verb) \(name)"
+            }
+            
+            if isGitSyncChange(files) {
+                return "update git sync workflow"
+            }
+            
+            let topLevelDirectories = Set(files.compactMap(topLevelDirectory))
+            if topLevelDirectories.count == 1, let directory = topLevelDirectories.first {
+                return groupedMessage(for: directory).lowercased()
+            }
+            
+            // List first 3 files if multiple changed
+            let fileNames = files.prefix(3).map { displayName(for: $0.path) }
+            let list = fileNames.joined(separator: ", ")
+            let suffix = files.count > 3 ? " and \(files.count - 3) others" : ""
+            return "update \(list)\(suffix)"
+        }()
+
+        // 4. Format the final commit message with optional scope
+        let scopeString = branchScope != nil ? "(\(branchScope!))" : ""
+        let finalMessage = "\(type)\(scopeString): \(description)"
+        
+        if isRemovalFlow {
+            return "\(finalMessage) before removal"
         }
-        return baseMessage
+        return finalMessage
     }
 
     static func commitAndPush(at path: String, commitMessage: String?) throws -> LocalGitCommandResult {
@@ -412,75 +479,98 @@ enum LocalGitCommandService {
         #endif
     }
 
-    static func prepareForRemoval(at path: String, commitMessage: String?) throws -> LocalGitCommandResult {
+    static func prepareForRemoval(at path: String, commitMessage: String?, force: Bool = false) throws -> LocalGitCommandResult {
         #if os(macOS)
         var snapshot = try validatedSnapshot(at: path)
-        try validateRemoteTracking(snapshot)
+        if !force {
+            try validateRemoteTracking(snapshot)
+        }
 
         var output: [String] = []
         if snapshot.isDirty {
             let message = commitMessage?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !message.isEmpty else {
+            let actualMessage = message.isEmpty && force ? "raCommand: auto-commit before force removal" : message
+            guard !actualMessage.isEmpty else {
                 throw LocalGitCommandError.dirtyWithoutCommitMessage
             }
 
             let addResult = try runGit(["add", "-A"], at: snapshot.path)
-            guard addResult.status == 0 else {
+            guard addResult.status == 0 || force else {
                 throw LocalGitCommandError.commandFailed(addResult.output)
             }
-            if !addResult.output.isEmpty { output.append(addResult.output) }
+            if addResult.status != 0 {
+                output.append("Force Warning: git add failed: \(addResult.output)")
+            } else if !addResult.output.isEmpty {
+                output.append(addResult.output)
+            }
 
-            let commitResult = try runGit(["commit", "-m", message], at: snapshot.path)
-            guard commitResult.status == 0 else {
-                throw LocalGitCommandError.commandFailed(commitResult.output)
+            let commitResult = try runGit(["commit", "-m", actualMessage], at: snapshot.path)
+            if commitResult.status != 0 && !force {
+                let statusResult = try runGit(["status", "--porcelain"], at: snapshot.path)
+                if !statusResult.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    throw LocalGitCommandError.commandFailed(commitResult.output)
+                }
             }
             if !commitResult.output.isEmpty { output.append(commitResult.output) }
         }
 
         let fetchResult = try runGit(["fetch", "--prune"], at: snapshot.path)
-        guard fetchResult.status == 0 else {
+        guard fetchResult.status == 0 || force else {
             throw LocalGitCommandError.commandFailed(fetchResult.output)
         }
-        if !fetchResult.output.isEmpty { output.append(fetchResult.output) }
+        if fetchResult.status != 0 {
+            output.append("Force Warning: git fetch failed: \(fetchResult.output)")
+        } else if !fetchResult.output.isEmpty {
+            output.append(fetchResult.output)
+        }
 
-        snapshot = try validatedSnapshot(at: path)
-        try validateRemoteTracking(snapshot)
+        if let currentSnapshot = try? validatedSnapshot(at: path) {
+            snapshot = currentSnapshot
+        }
 
         let ahead = snapshot.aheadCount ?? 0
         let behind = snapshot.behindCount ?? 0
-        if ahead > 0 && behind > 0 {
-            throw LocalGitCommandError.divergentBranch(ahead: ahead, behind: behind)
-        }
 
         if ahead > 0 {
             let pushResult = try runGit(["push"], at: snapshot.path)
-            guard pushResult.status == 0 else {
+            guard pushResult.status == 0 || force else {
                 throw LocalGitCommandError.commandFailed(pushResult.output)
             }
-            output.append(pushResult.output.isEmpty ? "Pushed local commits." : pushResult.output)
-        }
-
-        if behind > 0 {
-            let pullResult = try runGit(["pull", "--ff-only"], at: snapshot.path)
-            guard pullResult.status == 0 else {
-                throw LocalGitCommandError.commandFailed(pullResult.output)
+            if pushResult.status != 0 {
+                output.append("Force Warning: git push failed: \(pushResult.output)")
+            } else {
+                output.append(pushResult.output.isEmpty ? "Pushed local commits." : pushResult.output)
             }
-            output.append(pullResult.output.isEmpty ? "Fast-forwarded local workspace." : pullResult.output)
         }
 
-        let finalSnapshot = try validatedSnapshot(at: path)
-        try validateRemoteTracking(finalSnapshot)
-        guard !finalSnapshot.isDirty else {
-            throw LocalGitCommandError.unresolvedDirtyState
-        }
-        guard finalSnapshot.aheadCount == 0, finalSnapshot.behindCount == 0 else {
-            let ahead = finalSnapshot.aheadCount ?? 0
-            let behind = finalSnapshot.behindCount ?? 0
+        if !force {
             if ahead > 0 && behind > 0 {
                 throw LocalGitCommandError.divergentBranch(ahead: ahead, behind: behind)
             }
-            throw LocalGitCommandError.unsafeToRemove("The workspace is not fully synchronized with upstream.")
+
+            if behind > 0 {
+                let pullResult = try runGit(["pull", "--ff-only"], at: snapshot.path)
+                guard pullResult.status == 0 else {
+                    throw LocalGitCommandError.commandFailed(pullResult.output)
+                }
+                output.append(pullResult.output.isEmpty ? "Fast-forwarded local workspace." : pullResult.output)
+            }
+
+            let finalSnapshot = try validatedSnapshot(at: path)
+            try validateRemoteTracking(finalSnapshot)
+            guard !finalSnapshot.isDirty else {
+                throw LocalGitCommandError.unresolvedDirtyState
+            }
+            guard finalSnapshot.aheadCount == 0, finalSnapshot.behindCount == 0 else {
+                let ahead = finalSnapshot.aheadCount ?? 0
+                let behind = finalSnapshot.behindCount ?? 0
+                if ahead > 0 && behind > 0 {
+                    let divergentError = LocalGitCommandError.divergentBranch(ahead: ahead, behind: behind)
+                    throw divergentError
+                }
+                throw LocalGitCommandError.unsafeToRemove("The workspace is not fully synchronized with upstream.")
+            }
         }
 
         if output.isEmpty {
@@ -492,10 +582,12 @@ enum LocalGitCommandService {
         #endif
     }
 
-    static func moveCleanWorkspaceToTrash(at path: String) throws -> LocalGitCommandResult {
+    static func moveCleanWorkspaceToTrash(at path: String, force: Bool = false) throws -> LocalGitCommandResult {
         #if os(macOS)
         let snapshot = try validatedSnapshot(at: path)
-        try validateRemovalPreconditions(snapshot)
+        if !force {
+            try validateRemovalPreconditions(snapshot)
+        }
 
         let url = URL(fileURLWithPath: snapshot.path, isDirectory: true)
         do {

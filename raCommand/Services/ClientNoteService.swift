@@ -223,7 +223,7 @@ enum ClientNoteService {
         components.queryItems = items
         guard let url = components.url else { throw ClientNoteError.invalidResponse }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.localBypassSession.data(from: url)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Unknown error"
             throw ClientNoteError.serverError(msg)
@@ -252,7 +252,7 @@ enum ClientNoteService {
         var body: [String: Any] = ["feedbackId": feedbackId, "status": status]
         if !resolvedNote.isEmpty { body["resolvedNote"] = resolvedNote }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await URLSession.localBypassSession.data(for: req)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Update failed"
             throw ClientNoteError.serverError(msg)
@@ -282,7 +282,7 @@ enum ClientNoteService {
             "authorEmail": authorEmail
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await URLSession.localBypassSession.data(for: req)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Send failed"
             throw ClientNoteError.serverError(msg)
@@ -293,7 +293,7 @@ enum ClientNoteService {
         var components = URLComponents(string: "\(baseURL)/api/rag-notes")!
         components.queryItems = [URLQueryItem(name: "clientEmail", value: clientEmail)]
         guard let url = components.url else { throw ClientNoteError.invalidResponse }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.localBypassSession.data(from: url)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Fetch failed"
             throw ClientNoteError.serverError(msg)
@@ -312,7 +312,7 @@ enum ClientNoteService {
         var request = URLRequest(url: url)
         try applyDesktopAuthorization(to: &request)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.localBypassSession.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to load clients"
             throw ClientNoteError.serverError(msg)
@@ -338,7 +338,7 @@ enum ClientNoteService {
         var request = URLRequest(url: url)
         try applyDesktopAuthorization(to: &request)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.localBypassSession.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to load invoices"
             throw ClientNoteError.serverError(msg)
@@ -359,7 +359,7 @@ enum ClientNoteService {
         var request = URLRequest(url: url)
         try applyDesktopAuthorization(to: &request)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.localBypassSession.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to load contracts"
             throw ClientNoteError.serverError(msg)
@@ -377,7 +377,7 @@ enum ClientNoteService {
         var request = URLRequest(url: url)
         try applyDesktopAuthorization(to: &request)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.localBypassSession.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to load ideas"
             throw ClientNoteError.serverError(msg)
@@ -403,7 +403,7 @@ enum ClientNoteService {
             "text": text
         ])
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.localBypassSession.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to save idea"
             throw ClientNoteError.serverError(msg)
@@ -443,7 +443,7 @@ enum ClientNoteService {
         if !tags.isEmpty { payload["tags"] = tags }
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.localBypassSession.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to create workspace"
             throw ClientNoteError.serverError(msg)
@@ -493,7 +493,7 @@ enum ClientNoteService {
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await URLSession.localBypassSession.data(for: req)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Provision failed"
             throw ClientNoteError.provisionFailed(msg)

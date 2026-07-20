@@ -117,6 +117,39 @@ struct AdminInvoice: Identifiable, Decodable, Hashable {
     }
 }
 
+struct AdminRetainerTransaction: Identifiable, Decodable, Hashable {
+    let id: String
+    let clientId: String
+    let type: String
+    let amountCents: Int
+    let channel: String?
+    let senderOrPurpose: String?
+    let statementOfPurpose: String?
+    let allocatedTo: String?
+    let createdAt: String?
+    let balanceAfterCents: Int?
+
+    var displayAmount: String {
+        let prefix = type == "deposit" ? "+" : "-"
+        return String(format: "%@$%.2f", prefix, Double(amountCents) / 100.0)
+    }
+
+    var displayBalance: String {
+        if let bal = balanceAfterCents {
+            return String(format: "$%.2f", Double(bal) / 100.0)
+        }
+        return "—"
+    }
+
+    var displayChannel: String {
+        channel?.uppercased() ?? (type == "deposit" ? "DEPOSIT" : "DRAWDOWN")
+    }
+
+    var displayPurpose: String {
+        statementOfPurpose ?? senderOrPurpose ?? "Retainer Transaction"
+    }
+}
+
 struct AdminContract: Identifiable, Decodable, Hashable {
     let id: String
     let workspaceId: String?
@@ -345,6 +378,26 @@ enum ClientNoteService {
         }
 
         struct Response: Decodable { let data: [AdminInvoice] }
+        return try JSONDecoder().decode(Response.self, from: data).data
+    }
+
+    static func fetchRetainerLedger(clientId: String? = nil) async throws -> [AdminRetainerTransaction] {
+        var components = URLComponents(string: "\(desktopBaseURL)/api/admin/retainer/transactions")!
+        if let clientId, !clientId.isEmpty {
+            components.queryItems = [URLQueryItem(name: "clientId", value: clientId)]
+        }
+        guard let url = components.url else { throw ClientNoteError.invalidResponse }
+
+        var request = URLRequest(url: url)
+        try applyDesktopAuthorization(to: &request)
+
+        let (data, response) = try await URLSession.localBypassSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to load retainer ledger"
+            throw ClientNoteError.serverError(msg)
+        }
+
+        struct Response: Decodable { let data: [AdminRetainerTransaction] }
         return try JSONDecoder().decode(Response.self, from: data).data
     }
 

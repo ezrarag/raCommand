@@ -16,7 +16,7 @@ private let invoiceColumns: [GridItem] = [
 ]
 
 struct InvoicesView: View {
-    @State private var invoices: [AdminInvoice] = []
+    @State private var transactions: [AdminRetainerTransaction] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var searchText = ""
@@ -49,12 +49,12 @@ struct InvoicesView: View {
                     .whisperPanel()
             }
 
-            if isLoading && invoices.isEmpty {
+            if isLoading && invoices.isEmpty && transactions.isEmpty {
                 ProgressView()
                     .tint(WhisperTheme.accent)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 40)
-            } else if filteredInvoices.isEmpty {
+            } else if filteredInvoices.isEmpty && transactions.isEmpty {
                 WhisperEmptyState(
                     icon: "doc.text",
                     title: invoices.isEmpty ? "No invoices yet" : "No matches",
@@ -64,6 +64,60 @@ struct InvoicesView: View {
                 )
             } else {
                 table
+
+                if !transactions.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("RETAINER VAULT & LEDGER")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.mutedInk)
+
+                        VStack(spacing: 0) {
+                            ForEach(transactions) { tx in
+                                HStack(spacing: 12) {
+                                    Text(tx.displayChannel)
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(tx.type == "deposit" ? WhisperTheme.success.opacity(0.15) : WhisperTheme.warning.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                                        .foregroundStyle(tx.type == "deposit" ? WhisperTheme.success : WhisperTheme.warning)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(tx.displayPurpose)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(WhisperTheme.ink)
+                                        if let date = tx.createdAt {
+                                            Text(String(date.prefix(10)))
+                                                .font(.system(size: 10, design: .monospaced))
+                                                .foregroundStyle(WhisperTheme.mutedInk)
+                                        }
+                                    }
+
+                                    Spacer()
+
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text(tx.displayAmount)
+                                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                            .foregroundStyle(tx.type == "deposit" ? WhisperTheme.success : WhisperTheme.warning)
+                                        Text("Bal: \(tx.displayBalance)")
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(WhisperTheme.mutedInk)
+                                    }
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .overlay(alignment: .bottom) {
+                                    Rectangle().fill(Color.white.opacity(0.04)).frame(height: 1)
+                                }
+                            }
+                        }
+                        .background(WhisperTheme.panel, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                        )
+                    }
+                    .padding(.top, 10)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -73,7 +127,7 @@ struct InvoicesView: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Invoices")
+                Text("Invoices & Retainer Ledger")
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(WhisperTheme.ink)
                 Text(invoices.isEmpty ? "Billing tracked in readyaimgo admin" : "\(invoices.count) \(invoices.count == 1 ? "invoice" : "invoices") synced")
@@ -167,7 +221,11 @@ struct InvoicesView: View {
         isLoading = true
         errorMessage = nil
         do {
-            invoices = try await ClientNoteService.fetchInvoices()
+            async let invTask = ClientNoteService.fetchInvoices()
+            async let txTask = ClientNoteService.fetchRetainerLedger()
+            let (invs, txs) = try await (invTask, txTask)
+            invoices = invs
+            transactions = txs
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }

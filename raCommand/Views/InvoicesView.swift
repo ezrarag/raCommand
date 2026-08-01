@@ -16,6 +16,7 @@ private let invoiceColumns: [GridItem] = [
 ]
 
 struct InvoicesView: View {
+    @State private var invoices: [AdminInvoice] = []
     @State private var transactions: [AdminRetainerTransaction] = []
     @State private var isLoading = false
     @State private var errorMessage: String?

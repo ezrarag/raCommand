@@ -31,6 +31,7 @@ struct ClientFeedback: Identifiable, Decodable, Hashable {
     let source: String
     let agentContextStatus: String?
     let createdAt: String?
+    let screenshotUrl: String?
 
     var urgencyLevel: UrgencyLevel { UrgencyLevel(rawValue: urgency) ?? .medium }
     var isProjectSuggestion: Bool { source == "workspace-project-suggestion" }
@@ -586,4 +587,5 @@ extension ClientFeedback {
     }
     var isVideo: Bool { loomUrl != nil }
     var isFromExtension: Bool { source == "extension" }
+    var isFromWidget: Bool { source == "widget" }
 }

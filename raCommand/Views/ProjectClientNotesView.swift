@@ -19,6 +19,7 @@ struct ProjectClientNotesView: View {
     @State private var resolveNote = ""
     @State private var showResolveSheet = false
     @State private var selectedFeedback: ClientFeedback?
+    @State private var screenshotToShow: URL?
     @State private var successMessage: String?
     @State private var showShareSheet = false
     @State private var feedbackURL = ""
@@ -83,7 +84,44 @@ struct ProjectClientNotesView: View {
                 Task { await resolve(note: note, resolveNote: resolveText) }
             }
         }
+        .sheet(item: Binding(
+            get: { screenshotToShow.map { IdentifiableURL(url: $0) } },
+            set: { screenshotToShow = $0?.url }
+        )) { identURL in
+            ScreenshotLightboxView(url: identURL.url)
+        }
         .task { await load() }
+    }
+
+    private func copyPrompt(for note: ClientFeedback) {
+        let projectName = project.name.isEmpty ? "ReadyAimGo Project" : project.name
+        let pageURL = note.pageUrl ?? "N/A"
+        let screenshotURL = note.screenshotUrl ?? "N/A"
+        let noteText = note.rawText ?? note.summary
+        let action = note.suggestedAction.isEmpty ? "N/A" : note.suggestedAction
+
+        let prompt = """
+        # AI Coding Task Prompt
+        **Project Name:** \(projectName)
+        **Target Page URL:** \(pageURL)
+        **Screenshot URL:** \(screenshotURL)
+
+        ## Client Feedback Note
+        \(noteText)
+
+        ## AI Suggested Action
+        \(action)
+        """
+
+        #if os(macOS)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(prompt, forType: .string)
+        #else
+        UIPasteboard.general.string = prompt
+        #endif
+        
+        showSuccess("Copied prompt to clipboard!")
     }
 
     // MARK: - Header
@@ -214,10 +252,16 @@ struct ProjectClientNotesView: View {
                             note: note,
                             resolving: resolving == note.id,
                             onAcknowledge: {
-                            Task { await acknowledge(note: note) }
+                                Task { await acknowledge(note: note) }
                             },
                             onResolve: {
                                 selectedFeedback = note
+                            },
+                            onCopyPrompt: {
+                                copyPrompt(for: note)
+                            },
+                            onShowScreenshot: { url in
+                                screenshotToShow = url
                             },
                             ideaCount: ideaCount.flatMap { $0 > 0 ? $0 : nil }
                         )
@@ -300,6 +344,8 @@ struct FeedbackCard: View {
     let resolving: Bool
     let onAcknowledge: () -> Void
     let onResolve: () -> Void
+    let onCopyPrompt: () -> Void
+    let onShowScreenshot: (URL) -> Void
     let ideaCount: Int?
 
     var body: some View {
@@ -357,6 +403,33 @@ struct FeedbackCard: View {
                 .buttonStyle(.plain)
             }
 
+            // Screenshot Preview
+            if let screenshotStr = note.screenshotUrl, let screenshotURL = URL(string: screenshotStr) {
+                Button {
+                    onShowScreenshot(screenshotURL)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "photo.fill").foregroundStyle(WhisperTheme.info)
+                        Text("View Screenshot").font(.caption.weight(.semibold)).foregroundStyle(WhisperTheme.info)
+                        Spacer()
+                        AsyncImage(url: screenshotURL) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image.resizable().aspectRatio(contentMode: .fill)
+                            default:
+                                ProgressView().scaleEffect(0.5)
+                            }
+                        }
+                        .frame(width: 32, height: 32)
+                        .cornerRadius(6)
+                        .clipped()
+                    }
+                    .padding(10)
+                    .background(WhisperTheme.info.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+
             // Suggested action
             if note.actionable && !note.suggestedAction.isEmpty {
                 HStack(spacing: 6) {
@@ -381,9 +454,24 @@ struct FeedbackCard: View {
                 if let ideaCount {
                     pill("Ideas \(ideaCount)", color: WhisperTheme.warning)
                 }
+                if note.isFromWidget {
+                    pill("Widget", color: Color.indigo)
+                }
                 if note.isFromExtension { pill("Extension", color: Color.purple) }
                 Spacer()
                 // Actions
+                Button(action: onCopyPrompt) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.on.doc.fill")
+                        Text("Copy Prompt")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(WhisperTheme.accent)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(WhisperTheme.accent.opacity(0.1), in: Capsule())
+                }
+                .buttonStyle(.plain)
+
                 if note.status == "open" {
                     if resolving {
                         ProgressView().tint(.secondary).scaleEffect(0.7)
@@ -500,6 +588,85 @@ struct ResolveNoteSheet: View {
             .platformNavigationTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+        }
+    }
+}
+
+// MARK: - Lightbox Helper Structures
+
+struct IdentifiableURL: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+struct ScreenshotLightboxView: View {
+    @Environment(\.dismiss) private var dismiss
+    let url: URL
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+
+    var body: some View {
+        NavigationStack {
+            VStack {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .scaleEffect(scale)
+                            .gesture(
+                                MagnifyGesture()
+                                    .onChanged { value in
+                                        let delta = value.magnification / lastScale
+                                        lastScale = value.magnification
+                                        scale = min(max(scale * delta, 0.5), 4.0)
+                                    }
+                                    .onEnded { _ in
+                                        lastScale = 1.0
+                                    }
+                            )
+                            .onTapGesture(count: 2) {
+                                withAnimation {
+                                    scale = scale > 1.0 ? 1.0 : 2.0
+                                }
+                            }
+                    case .failure:
+                        VStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle.fill").font(.largeTitle).foregroundStyle(WhisperTheme.danger)
+                            Text("Failed to load screenshot").font(.subheadline)
+                        }
+                    case .empty:
+                        ProgressView()
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
+                
+                HStack(spacing: 20) {
+                    Button(action: { scale = max(scale - 0.25, 0.5) }) {
+                        Image(systemName: "minus.magnifyingglass")
+                    }
+                    Button(action: { scale = 1.0 }) {
+                        Text("Reset Zoom")
+                    }
+                    Button(action: { scale = min(scale + 0.25, 4.0) }) {
+                        Image(systemName: "plus.magnifyingglass")
+                    }
+                }
+                .font(.subheadline)
+                .padding(.vertical, 8)
+                .foregroundColor(.white)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.opacity(0.9))
+            .navigationTitle("Screenshot Preview")
+            .platformNavigationTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
             }
         }
     }

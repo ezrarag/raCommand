@@ -476,6 +476,7 @@ enum ClientNoteService {
         name: String,
         clientId: String? = nil,
         repoUrl: String? = nil,
+        publicUrl: String? = nil,
         tags: [String] = []
     ) async throws -> RemoteWorkspace {
         guard let url = URL(string: "\(desktopBaseURL)/api/admin/workspaces") else {
@@ -493,6 +494,9 @@ enum ClientNoteService {
         }
         if let repoUrl, !repoUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             payload["repoUrl"] = repoUrl
+        }
+        if let publicUrl, !publicUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["publicUrl"] = publicUrl
         }
         if !tags.isEmpty { payload["tags"] = tags }
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)

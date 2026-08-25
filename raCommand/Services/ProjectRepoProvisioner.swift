@@ -74,8 +74,22 @@ enum ProjectRepoProvisioner {
         project.lastUpdated = Date()
         try? modelContext.save()
 
+        onStage("Connecting Vercel deployment...")
+        var vercelPublicURL: String? = nil
+        do {
+            let deploymentURL = try await VercelService.createProject(
+                repoName: repo.name,
+                repoFullName: repo.fullName
+            )
+            vercelPublicURL = deploymentURL
+            project.vercelURL = deploymentURL
+            try? modelContext.save()
+        } catch {
+            print("Vercel auto-provisioning skipped or failed: \(error.localizedDescription)")
+        }
+
         onStage("Syncing workspace to readyaimgo admin...")
-        await syncWorkspaceToAdmin(project: project, modelContext: modelContext)
+        await syncWorkspaceToAdmin(project: project, publicUrl: vercelPublicURL, modelContext: modelContext)
 
         onStage("Opening \(target.rawValue) thread...")
         do {
@@ -97,12 +111,13 @@ enum ProjectRepoProvisioner {
         try? modelContext.save()
     }
 
-    static func syncWorkspaceToAdmin(project: Project, modelContext: ModelContext) async {
+    static func syncWorkspaceToAdmin(project: Project, publicUrl: String? = nil, modelContext: ModelContext) async {
         project.workspaceSyncStatus = .pending
         do {
             let workspace = try await ClientNoteService.createRemoteWorkspace(
                 name: project.name,
-                repoUrl: project.repoURL
+                repoUrl: project.repoURL,
+                publicUrl: publicUrl ?? (project.vercelURL.isEmpty ? nil : project.vercelURL)
             )
             project.remoteWorkspaceId = workspace.id
             project.workspaceSyncStatus = .synced

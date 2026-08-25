@@ -150,4 +150,52 @@ enum VercelService {
             throw VercelServiceError.networkError(error.localizedDescription)
         }
     }
+
+    /// Creates a Vercel project linked to a GitHub repository (POST /v10/projects).
+    static func createProject(repoName: String, repoFullName: String) async throws -> String {
+        guard let token = KeychainService.loadVercelToken(), !token.isEmpty else {
+            throw VercelServiceError.unconfigured
+        }
+
+        var urlString = "https://api.vercel.com/v10/projects"
+        if let teamId = KeychainService.loadVercelTeamId(), !teamId.isEmpty {
+            urlString += "?teamId=\(teamId)"
+        }
+
+        guard let url = URL(string: urlString) else {
+            throw VercelServiceError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let payload: [String: Any] = [
+            "name": repoName,
+            "gitRepository": [
+                "type": "github",
+                "repo": repoFullName
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw VercelServiceError.networkError("Invalid HTTP response.")
+            }
+
+            guard httpResponse.statusCode == 200 || httpResponse.statusCode == 201 else {
+                let errorBody = String(data: data, encoding: .utf8) ?? "Unknown Vercel API error"
+                throw VercelServiceError.apiError(httpResponse.statusCode, errorBody)
+            }
+
+            return "https://\(repoName).vercel.app"
+        } catch let error as VercelServiceError {
+            throw error
+        } catch {
+            throw VercelServiceError.networkError(error.localizedDescription)
+        }
+    }
 }

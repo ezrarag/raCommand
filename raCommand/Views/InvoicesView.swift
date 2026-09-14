@@ -2,7 +2,7 @@
 //  InvoicesView.swift
 //  raCommand
 //
-//  Read-only mirror of readyaimgo admin's per-client invoices.
+//  Interactive mirror and status controller for readyaimgo admin's client invoices.
 //
 
 import SwiftUI
@@ -21,6 +21,7 @@ struct InvoicesView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var searchText = ""
+    @State private var selectedInvoice: AdminInvoice?
 
     private var filteredInvoices: [AdminInvoice] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -123,6 +124,11 @@ struct InvoicesView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task { await load() }
+        .sheet(item: $selectedInvoice) { invoice in
+            InvoiceDetailSheet(invoice: invoice, onStatusChanged: {
+                Task { await load() }
+            })
+        }
     }
 
     private var header: some View {
@@ -167,10 +173,16 @@ struct InvoicesView: View {
 
             ForEach(filteredInvoices) { invoice in
                 LazyVGrid(columns: invoiceColumns, spacing: 12) {
-                    Text(invoice.title)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(WhisperTheme.ink)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(invoice.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(WhisperTheme.ink)
+                            .lineLimit(1)
+                        Text(invoice.invoiceNumber)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.mutedInk)
+                            .lineLimit(1)
+                    }
 
                     Text(invoice.workspaceId ?? "—")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -181,7 +193,7 @@ struct InvoicesView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(WhisperTheme.ink)
 
-                    Text(invoice.dueDate.prefix(10))
+                    Text(String(invoice.dueDate.prefix(10)))
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(WhisperTheme.mutedInk)
 
@@ -195,6 +207,10 @@ struct InvoicesView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    selectedInvoice = invoice
+                }
                 .overlay(alignment: .bottom) {
                     Rectangle().fill(Color.white.opacity(0.04)).frame(height: 1)
                 }
@@ -234,12 +250,173 @@ struct InvoicesView: View {
     }
 }
 
-extension Text {
-    func tableHeader(alignment: Alignment = .leading) -> some View {
-        self
-            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-            .tracking(0.6)
-            .foregroundStyle(WhisperTheme.mutedInk)
-            .frame(maxWidth: .infinity, alignment: alignment)
+// MARK: - Invoice Detail Sheet
+
+struct InvoiceDetailSheet: View {
+    let invoice: AdminInvoice
+    var onStatusChanged: (() -> Void)? = nil
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var isUpdating = false
+    @State private var alertMessage: String?
+    @State private var isSuccess = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Header
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(invoice.invoiceNumber)
+                        .font(.system(size: 20, weight: .bold, design: .monospaced))
+                        .foregroundStyle(WhisperTheme.ink)
+                    Text(invoice.title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(WhisperTheme.mutedInk)
+                }
+
+                Spacer()
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(WhisperTheme.mutedInk)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let alertMessage {
+                HStack {
+                    Image(systemName: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(isSuccess ? WhisperTheme.success : WhisperTheme.danger)
+                    Text(alertMessage)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(isSuccess ? WhisperTheme.success : WhisperTheme.danger)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background((isSuccess ? WhisperTheme.success : WhisperTheme.danger).opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            // Summary Grid
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("CLIENT ID")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.mutedInk)
+                        Text(invoice.clientId)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(WhisperTheme.ink)
+                    }
+
+                    Spacer()
+
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("AMOUNT")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.mutedInk)
+                        Text(invoice.displayAmount)
+                            .font(.system(size: 16, weight: .bold, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.accent)
+                    }
+                }
+
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("WORKSPACE")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.mutedInk)
+                        Text(invoice.workspaceId ?? "—")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.ink)
+                    }
+
+                    Spacer()
+
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("DUE DATE")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.mutedInk)
+                        Text(String(invoice.dueDate.prefix(10)))
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.ink)
+                    }
+                }
+            }
+            .padding(16)
+            .background(WhisperTheme.panel, in: RoundedRectangle(cornerRadius: 10))
+
+            Spacer()
+
+            // Status Actions
+            VStack(spacing: 10) {
+                if invoice.status == "draft" {
+                    Button {
+                        updateStatus("client_review")
+                    } label: {
+                        HStack {
+                            if isUpdating {
+                                ProgressView().tint(.white).controlSize(.small)
+                            } else {
+                                Image(systemName: "paperplane.fill")
+                            }
+                            Text(isUpdating ? "Publishing..." : "Mark as Sent & Publish")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(WhisperTheme.success, in: RoundedRectangle(cornerRadius: 9))
+                        .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isUpdating)
+                }
+
+                if invoice.status != "paid" {
+                    Button {
+                        updateStatus("paid")
+                    } label: {
+                        HStack {
+                            if isUpdating {
+                                ProgressView().tint(.white).controlSize(.small)
+                            } else {
+                                Image(systemName: "checkmark.seal.fill")
+                            }
+                            Text(isUpdating ? "Updating..." : "Mark as Paid")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(WhisperTheme.accent, in: RoundedRectangle(cornerRadius: 9))
+                        .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isUpdating)
+                }
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 420, minHeight: 380)
+        .background(WhisperTheme.background)
+    }
+
+    private func updateStatus(_ newStatus: String) {
+        guard let contractId = invoice.workspaceId ?? invoice.clientId.components(separatedBy: "/").first else { return }
+        Task {
+            isUpdating = true
+            alertMessage = nil
+            do {
+                _ = try await ClientNoteService.updateInvoiceStatus(contractId: contractId, invoiceId: invoice.id, status: newStatus)
+                isSuccess = true
+                alertMessage = "Invoice updated to \(newStatus)!"
+                onStatusChanged?()
+            } catch {
+                isSuccess = false
+                alertMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+            isUpdating = false
+        }
     }
 }

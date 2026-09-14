@@ -2,7 +2,7 @@
 //  ContractsView.swift
 //  raCommand
 //
-//  Read-only mirror of readyaimgo admin's contracts collection.
+//  Interactive mirror and management surface for readyaimgo admin contracts & milestone invoicing.
 //
 
 import SwiftUI
@@ -19,6 +19,7 @@ struct ContractsView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var searchText = ""
+    @State private var selectedContract: AdminContract?
 
     private var filteredContracts: [AdminContract] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -26,6 +27,7 @@ struct ContractsView: View {
         return contracts.filter { contract in
             contract.displayTitle.localizedCaseInsensitiveContains(query)
                 || (contract.clientId ?? "").localizedCaseInsensitiveContains(query)
+                || (contract.clientName ?? "").localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -66,6 +68,11 @@ struct ContractsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task { await load() }
+        .sheet(item: $selectedContract) { contract in
+            ContractDetailSheet(contract: contract, onInvoiceGenerated: {
+                Task { await load() }
+            })
+        }
     }
 
     private var header: some View {
@@ -110,13 +117,21 @@ struct ContractsView: View {
             ForEach(filteredContracts) { contract in
                 LazyVGrid(columns: contractColumns, spacing: 12) {
                     HStack(spacing: 8) {
-                        Image(systemName: contract.fileUrl != nil ? "doc.fill" : "doc")
+                        Image(systemName: contract.fileUrl != nil || contract.documentUrl != nil ? "doc.fill" : "doc")
                             .font(.system(size: 11))
                             .foregroundStyle(WhisperTheme.accent)
-                        Text(contract.displayTitle)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(WhisperTheme.ink)
-                            .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(contract.displayTitle)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(WhisperTheme.ink)
+                                .lineLimit(1)
+                            if let clientName = contract.clientName, !clientName.isEmpty {
+                                Text(clientName)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(WhisperTheme.mutedInk)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
 
                     Text(contract.displayType)
@@ -139,6 +154,10 @@ struct ContractsView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    selectedContract = contract
+                }
                 .overlay(alignment: .bottom) {
                     Rectangle().fill(Color.white.opacity(0.04)).frame(height: 1)
                 }
@@ -170,5 +189,170 @@ struct ContractsView: View {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         isLoading = false
+    }
+}
+
+// MARK: - Contract Detail & Invoicing Sheet
+
+struct ContractDetailSheet: View {
+    let contract: AdminContract
+    var onInvoiceGenerated: (() -> Void)? = nil
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var isGenerating = false
+    @State private var alertMessage: String?
+    @State private var isSuccess = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Header
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(contract.displayTitle)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(WhisperTheme.ink)
+                    Text(contract.displayType)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(WhisperTheme.mutedInk)
+                }
+
+                Spacer()
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(WhisperTheme.mutedInk)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let alertMessage {
+                HStack {
+                    Image(systemName: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(isSuccess ? WhisperTheme.success : WhisperTheme.danger)
+                    Text(alertMessage)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(isSuccess ? WhisperTheme.success : WhisperTheme.danger)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background((isSuccess ? WhisperTheme.success : WhisperTheme.danger).opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            // Summary / Client info
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("CLIENT")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.mutedInk)
+                        Text(contract.clientName ?? contract.clientId ?? "—")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(WhisperTheme.ink)
+                    }
+
+                    Spacer()
+
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("TOTAL VALUE")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.mutedInk)
+                        Text(contract.displayTotalValue)
+                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .foregroundStyle(WhisperTheme.accent)
+                    }
+                }
+
+                if let email = contract.clientEmail, !email.isEmpty {
+                    Text(email)
+                        .font(.system(size: 12))
+                        .foregroundStyle(WhisperTheme.mutedInk)
+                }
+
+                if let summary = contract.summary, !summary.isEmpty {
+                    Text(summary)
+                        .font(.system(size: 13))
+                        .foregroundStyle(WhisperTheme.ink)
+                        .padding(12)
+                        .background(WhisperTheme.panel, in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+
+            // Milestones Section
+            if let dates = contract.paymentDates, !dates.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("CONTRACT MILESTONES")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(WhisperTheme.mutedInk)
+
+                    VStack(spacing: 0) {
+                        ForEach(Array(dates.enumerated()), id: \.offset) { index, dateLabel in
+                            HStack {
+                                Text("\(index + 1). \(dateLabel)")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(WhisperTheme.ink)
+
+                                Spacer()
+
+                                if let amounts = contract.milestoneAmountsCents, index < amounts.count {
+                                    Text(String(format: "$%.2f", Double(amounts[index]) / 100.0))
+                                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(WhisperTheme.ink)
+                                }
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .overlay(alignment: .bottom) {
+                                Rectangle().fill(Color.white.opacity(0.04)).frame(height: 1)
+                            }
+                        }
+                    }
+                    .background(WhisperTheme.panel, in: RoundedRectangle(cornerRadius: 9))
+                }
+            }
+
+            Spacer()
+
+            // Invoicing Action
+            Button {
+                Task {
+                    isGenerating = true
+                    alertMessage = nil
+                    do {
+                        let invoice = try await ClientNoteService.generateNextInvoice(contractId: contract.id)
+                        isSuccess = true
+                        alertMessage = "Generated Invoice \(invoice.invoiceNumber) for \(invoice.title)!"
+                        onInvoiceGenerated?()
+                    } catch {
+                        isSuccess = false
+                        alertMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    }
+                    isGenerating = false
+                }
+            } label: {
+                HStack {
+                    if isGenerating {
+                        ProgressView()
+                            .tint(.white)
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "plus.circle.fill")
+                    }
+                    Text(isGenerating ? "Generating Invoice..." : "Generate Next Invoice")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(WhisperTheme.accent, in: RoundedRectangle(cornerRadius: 10))
+                .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .disabled(isGenerating)
+        }
+        .padding(24)
+        .frame(minWidth: 460, minHeight: 480)
+        .background(WhisperTheme.background)
     }
 }

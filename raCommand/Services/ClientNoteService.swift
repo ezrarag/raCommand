@@ -155,10 +155,19 @@ struct AdminContract: Identifiable, Decodable, Hashable {
     let id: String
     let workspaceId: String?
     let clientId: String?
+    let clientName: String?
+    let clientEmail: String?
     let title: String?
+    let summary: String?
     let status: String?
+    let contractType: String?
     let type: String?
+    let monthlyValue: Double?
+    let totalContractValueCents: Int?
+    let paymentDates: [String]?
+    let milestoneAmountsCents: [Int]?
     let fileUrl: String?
+    let documentUrl: String?
     let createdAt: String?
     let updatedAt: String?
 
@@ -173,8 +182,19 @@ struct AdminContract: Identifiable, Decodable, Hashable {
     }
 
     var displayType: String {
-        let trimmed = type?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? "Scope of work" : trimmed.replacingOccurrences(of: "_", with: " ").capitalized
+        let rawType = contractType ?? type ?? ""
+        let trimmed = rawType.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Client Project" : trimmed.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    var displayTotalValue: String {
+        if let totalCents = totalContractValueCents, totalCents > 0 {
+            return String(format: "$%.2f", Double(totalCents) / 100.0)
+        }
+        if let monthly = monthlyValue, monthly > 0 {
+            return String(format: "$%.2f/mo", monthly)
+        }
+        return "—"
     }
 }
 
@@ -404,10 +424,10 @@ enum ClientNoteService {
 
     static func fetchContracts(clientId: String? = nil, workspaceId: String? = nil) async throws -> [AdminContract] {
         var components = URLComponents(string: "\(desktopBaseURL)/api/contracts")!
-        var items: [URLQueryItem] = []
+        var items: [URLQueryItem] = [URLQueryItem(name: "admin", value: "true")]
         if let clientId, !clientId.isEmpty { items.append(URLQueryItem(name: "clientId", value: clientId)) }
         if let workspaceId, !workspaceId.isEmpty { items.append(URLQueryItem(name: "workspaceId", value: workspaceId)) }
-        if !items.isEmpty { components.queryItems = items }
+        components.queryItems = items
         guard let url = components.url else { throw ClientNoteError.invalidResponse }
 
         var request = URLRequest(url: url)
@@ -419,8 +439,51 @@ enum ClientNoteService {
             throw ClientNoteError.serverError(msg)
         }
 
-        struct Response: Decodable { let data: [AdminContract] }
-        return try JSONDecoder().decode(Response.self, from: data).data
+        struct Response: Decodable {
+            let data: [AdminContract]?
+            let contracts: [AdminContract]?
+        }
+        let res = try JSONDecoder().decode(Response.self, from: data)
+        return res.data ?? res.contracts ?? []
+    }
+
+    static func generateNextInvoice(contractId: String) async throws -> AdminInvoice {
+        guard let url = URL(string: "\(desktopBaseURL)/api/contracts/\(contractId)/generate-invoice") else {
+            throw ClientNoteError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try applyDesktopAuthorization(to: &request)
+
+        let (data, response) = try await URLSession.localBypassSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to generate invoice"
+            throw ClientNoteError.serverError(msg)
+        }
+
+        struct GenResponse: Decodable { let invoice: AdminInvoice }
+        return try JSONDecoder().decode(GenResponse.self, from: data).invoice
+    }
+
+    static func updateInvoiceStatus(contractId: String, invoiceId: String, status: String) async throws -> AdminInvoice {
+        guard let url = URL(string: "\(desktopBaseURL)/api/contracts/\(contractId)/invoices/\(invoiceId)") else {
+            throw ClientNoteError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try applyDesktopAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["status": status])
+
+        let (data, response) = try await URLSession.localBypassSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Failed to update invoice"
+            throw ClientNoteError.serverError(msg)
+        }
+
+        struct UpdateResponse: Decodable { let invoice: AdminInvoice }
+        return try JSONDecoder().decode(UpdateResponse.self, from: data).invoice
     }
 
     static func fetchIdeaCount(clientId: String) async throws -> Int {
